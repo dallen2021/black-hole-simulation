@@ -124,6 +124,7 @@
                 vec3 rayPos = uCameraPos;
                 
                 float rs = uRadiusLimit;
+                float horizonRadius = rs * uHorizonHit;
                 vec3 h = cross(rayPos, rayDir);
                 float h2 = dot(h, h);
                 
@@ -135,7 +136,7 @@
                     float r2 = dot(rayPos, rayPos);
                     float r = sqrt(r2);
                     
-                    if(r < rs * uHorizonHit) { hitHorizon = true; break; }
+                    if(r < horizonRadius) { hitHorizon = true; break; }
                     if(r > 150.0) { break; }
                     
                     vec3 accel = -uGravityK * uLensStrength * h2 * rs * rayPos / (r2 * r2 * r);
@@ -193,7 +194,26 @@
                     if (rayPos.y * (rayPos.y + rayDir.y * dt) < 0.0) {
                         dt = min(dt, abs(rayPos.y / rayDir.y) + 0.001); 
                     }
-                    rayPos += rayDir * dt;
+
+                    // Robust horizon hit: prevent stepping over the sphere at shallow grazing angles.
+                    vec3 nextPos = rayPos + rayDir * dt;
+                    vec3 seg = nextPos - rayPos;
+                    float a = dot(seg, seg);
+                    if (a > 1e-8) {
+                        float b = 2.0 * dot(rayPos, seg);
+                        float cSeg = dot(rayPos, rayPos) - horizonRadius * horizonRadius;
+                        float disc = b * b - 4.0 * a * cSeg;
+                        if (disc > 0.0) {
+                            float sDisc = sqrt(disc);
+                            float t0 = (-b - sDisc) / (2.0 * a);
+                            float t1 = (-b + sDisc) / (2.0 * a);
+                            if ((t0 >= 0.0 && t0 <= 1.0) || (t1 >= 0.0 && t1 <= 1.0)) {
+                                hitHorizon = true;
+                                break;
+                            }
+                        }
+                    }
+                    rayPos = nextPos;
                 }
                 
                 if(!hitHorizon && color.a < 0.99) {
