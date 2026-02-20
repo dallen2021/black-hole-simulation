@@ -431,7 +431,8 @@
             outerFadeStart: 10.0,
             outerFadeEnd: 14.0,
             edgeBoost: 1.5,
-            radialMin: 0.35
+            radialMin: 0.35,
+            gasCoupling: 1.0
         };
         const backDiskTuner = { ...diskTunerDefaults };
         const frontDiskTuner = { ...diskTunerDefaults };
@@ -893,6 +894,7 @@
 
         const backDiskFolder = gui.addFolder('Back Disk Tuner');
         backDiskFolder.add(backDiskTuner, 'alpha', 0.0, 3.0, 0.01).name('Alpha');
+        backDiskFolder.add(backDiskTuner, 'gasCoupling', 0.0, 1.0, 0.01).name('Gas Coupling');
         backDiskFolder.add(backDiskTuner, 'innerOffset', -1.0, 3.0, 0.01).name('Inner Offset');
         backDiskFolder.add(backDiskTuner, 'outerRadius', 6.0, 30.0, 0.1).name('Outer Radius');
         backDiskFolder.add(backDiskTuner, 'tempPower', 0.2, 4.0, 0.01).name('Temp Power');
@@ -908,6 +910,7 @@
 
         const frontDiskFolder = gui.addFolder('Front Disk Tuner');
         frontDiskFolder.add(frontDiskTuner, 'alpha', 0.0, 3.0, 0.01).name('Alpha');
+        frontDiskFolder.add(frontDiskTuner, 'gasCoupling', 0.0, 1.0, 0.01).name('Gas Coupling');
         frontDiskFolder.add(frontDiskTuner, 'innerOffset', -1.0, 3.0, 0.01).name('Inner Offset');
         frontDiskFolder.add(frontDiskTuner, 'outerRadius', 6.0, 30.0, 0.1).name('Outer Radius');
         frontDiskFolder.add(frontDiskTuner, 'tempPower', 0.2, 4.0, 0.01).name('Temp Power');
@@ -1141,46 +1144,96 @@
             plasmaMatFront.uniforms.uDiskEdgeBoost.value = frontDiskTuner.edgeBoost;
             plasmaMatFront.uniforms.uDiskRadialMin.value = frontDiskTuner.radialMin;
             particleGeo.setDrawRange(0, Math.floor(particleCount * THREE.MathUtils.clamp(particleParams.density, 0.0, 1.0)));
-            pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
-            pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
-            pMatBack.uniforms.uInnerCutoff.value = particleParams.innerCutoff;
-            pMatFront.uniforms.uInnerCutoff.value = particleParams.innerCutoff;
-            pMatBack.uniforms.uInnerFadeStart.value = particleParams.innerFadeStart;
-            pMatFront.uniforms.uInnerFadeStart.value = particleParams.innerFadeStart;
-            pMatBack.uniforms.uInnerFadeEnd.value = particleParams.innerFadeEnd;
-            pMatFront.uniforms.uInnerFadeEnd.value = particleParams.innerFadeEnd;
-            pMatBack.uniforms.uParticleAlpha.value = particleParams.alpha;
-            pMatFront.uniforms.uParticleAlpha.value = particleParams.alpha;
-            pMatBack.uniforms.uParticleSoftness.value = particleParams.softness;
-            pMatFront.uniforms.uParticleSoftness.value = particleParams.softness;
-            pMatBack.uniforms.uParticleEdgeStart.value = particleParams.edgeStart;
-            pMatFront.uniforms.uParticleEdgeStart.value = particleParams.edgeStart;
-            pMatBack.uniforms.uParticleEdgeEnd.value = particleParams.edgeEnd;
-            pMatFront.uniforms.uParticleEdgeEnd.value = particleParams.edgeEnd;
-            pMatBack.uniforms.uParticleEdgePow.value = particleParams.edgePow;
-            pMatFront.uniforms.uParticleEdgePow.value = particleParams.edgePow;
-            pMatBack.uniforms.uParticleBeaming.value = particleParams.beaming;
-            pMatFront.uniforms.uParticleBeaming.value = particleParams.beaming;
-            pMatBack.uniforms.uParticleTempPow.value = particleParams.tempPow;
-            pMatFront.uniforms.uParticleTempPow.value = particleParams.tempPow;
-            pMatBack.uniforms.uParticleCoreGamma.value = particleParams.coreGamma;
-            pMatFront.uniforms.uParticleCoreGamma.value = particleParams.coreGamma;
-            pMatBack.uniforms.uParticleOrbitMul.value = particleParams.orbitMul;
-            pMatFront.uniforms.uParticleOrbitMul.value = particleParams.orbitMul;
-            pMatBack.uniforms.uParticleVerticalScale.value = particleParams.verticalScale;
-            pMatFront.uniforms.uParticleVerticalScale.value = particleParams.verticalScale;
-            pMatBack.uniforms.uParticleJitterAmp.value = particleParams.jitterAmp;
-            pMatFront.uniforms.uParticleJitterAmp.value = particleParams.jitterAmp;
-            pMatBack.uniforms.uParticleJitterFreq.value = particleParams.jitterFreq;
-            pMatFront.uniforms.uParticleJitterFreq.value = particleParams.jitterFreq;
-            pMatBack.uniforms.uParticleSizeMul.value = particleParams.sizeMul;
-            pMatFront.uniforms.uParticleSizeMul.value = particleParams.sizeMul;
-            pMatBack.uniforms.uParticleConeStart.value = particleParams.coneStart;
-            pMatFront.uniforms.uParticleConeStart.value = particleParams.coneStart;
-            pMatBack.uniforms.uParticleConeEnd.value = particleParams.coneEnd;
-            pMatFront.uniforms.uParticleConeEnd.value = particleParams.coneEnd;
-            pMatBack.uniforms.uParticleConeMin.value = particleParams.coneMin;
-            pMatFront.uniforms.uParticleConeMin.value = particleParams.coneMin;
+            const applyLayerParticleTuner = (material, tuner) => {
+                const coupling = THREE.MathUtils.clamp(tuner.gasCoupling, 0.0, 1.0);
+                const mixVal = (base, tuned) => THREE.MathUtils.lerp(base, tuned, coupling);
+                const safeDiv = (a, b) => a / Math.max(Math.abs(b), 1e-4);
+
+                const alphaScale = THREE.MathUtils.clamp(safeDiv(tuner.alpha, diskTunerDefaults.alpha), 0.0, 6.0);
+                const tempScale = THREE.MathUtils.clamp(safeDiv(tuner.tempPower, diskTunerDefaults.tempPower), 0.05, 6.0);
+                const beamDelta = tuner.beaming - diskTunerDefaults.beaming;
+                const noiseStrengthScale = THREE.MathUtils.clamp(safeDiv(tuner.noiseStrength, diskTunerDefaults.noiseStrength), 0.0, 6.0);
+                const noiseScrollScale = THREE.MathUtils.clamp(safeDiv(tuner.noiseScroll, diskTunerDefaults.noiseScroll), 0.0, 6.0);
+                const edgeScale = THREE.MathUtils.clamp(safeDiv(tuner.edgeBoost, diskTunerDefaults.edgeBoost), 0.05, 6.0);
+
+                const outerRadiusDelta = tuner.outerRadius - diskTunerDefaults.outerRadius;
+                const innerOffsetDelta = tuner.innerOffset - diskTunerDefaults.innerOffset;
+                const fadeStartDelta = tuner.outerFadeStart - diskTunerDefaults.outerFadeStart;
+                const fadeEndDelta = tuner.outerFadeEnd - diskTunerDefaults.outerFadeEnd;
+                const radialDelta = tuner.radialMin - diskTunerDefaults.radialMin;
+                const noiseScaleRatio = THREE.MathUtils.clamp(
+                    Math.pow(Math.max(tuner.noiseScale, 0.01) / Math.max(diskTunerDefaults.noiseScale, 0.01), 0.35),
+                    0.25,
+                    2.5
+                );
+
+                const tunedParticleBrightness = params.particleBrightness * THREE.MathUtils.clamp(
+                    1.0 + radialDelta * 0.45 + (tuner.alpha - diskTunerDefaults.alpha) * 0.25,
+                    0.05,
+                    4.0
+                );
+                const tunedInnerCutoff = particleParams.innerCutoff + innerOffsetDelta * 0.35;
+                const tunedInnerFadeStart = particleParams.innerFadeStart + innerOffsetDelta * 0.35;
+                const tunedInnerFadeEnd = particleParams.innerFadeEnd + innerOffsetDelta * 0.55 + outerRadiusDelta * 0.08;
+                const tunedEdgeStart = Math.max(0.0, particleParams.edgeStart + fadeStartDelta + outerRadiusDelta * 0.15);
+                const tunedEdgeEnd = Math.max(
+                    tunedEdgeStart + 0.001,
+                    particleParams.edgeEnd + fadeEndDelta + outerRadiusDelta * 0.35
+                );
+                const tunedConeStart = Math.max(0.0, particleParams.coneStart + outerRadiusDelta * 0.25);
+                const tunedConeEnd = Math.max(tunedConeStart + 0.1, particleParams.coneEnd + outerRadiusDelta * 0.55);
+
+                material.uniforms.uParticleBrightness.value = mixVal(params.particleBrightness, tunedParticleBrightness);
+                material.uniforms.uInnerCutoff.value = mixVal(particleParams.innerCutoff, tunedInnerCutoff);
+                material.uniforms.uInnerFadeStart.value = mixVal(particleParams.innerFadeStart, tunedInnerFadeStart);
+                material.uniforms.uInnerFadeEnd.value = mixVal(particleParams.innerFadeEnd, tunedInnerFadeEnd);
+                material.uniforms.uParticleAlpha.value = mixVal(particleParams.alpha, particleParams.alpha * alphaScale);
+                material.uniforms.uParticleSoftness.value = particleParams.softness;
+                material.uniforms.uParticleEdgeStart.value = mixVal(particleParams.edgeStart, tunedEdgeStart);
+                material.uniforms.uParticleEdgeEnd.value = mixVal(particleParams.edgeEnd, tunedEdgeEnd);
+                material.uniforms.uParticleEdgePow.value = mixVal(particleParams.edgePow, particleParams.edgePow * edgeScale);
+                material.uniforms.uParticleBeaming.value = mixVal(
+                    particleParams.beaming,
+                    Math.max(0.0, particleParams.beaming + beamDelta * 0.5)
+                );
+                material.uniforms.uParticleTempPow.value = mixVal(particleParams.tempPow, particleParams.tempPow * tempScale);
+                material.uniforms.uParticleCoreGamma.value = mixVal(
+                    particleParams.coreGamma,
+                    Math.max(0.05, particleParams.coreGamma * (1.0 + radialDelta * 0.6))
+                );
+                material.uniforms.uParticleOrbitMul.value = mixVal(particleParams.orbitMul, particleParams.orbitMul * noiseScaleRatio);
+                material.uniforms.uParticleVerticalScale.value = mixVal(
+                    particleParams.verticalScale,
+                    Math.max(0.0, particleParams.verticalScale * THREE.MathUtils.clamp(1.0 + outerRadiusDelta * 0.03, 0.2, 3.5))
+                );
+                material.uniforms.uParticleJitterAmp.value = mixVal(
+                    particleParams.jitterAmp,
+                    Math.max(
+                        0.0,
+                        particleParams.jitterAmp * noiseStrengthScale + Math.max(0.0, tuner.noiseStrength - diskTunerDefaults.noiseStrength) * 0.03
+                    )
+                );
+                material.uniforms.uParticleJitterFreq.value = mixVal(
+                    particleParams.jitterFreq,
+                    Math.max(
+                        0.0,
+                        particleParams.jitterFreq * noiseScrollScale + Math.max(0.0, tuner.noiseScroll - diskTunerDefaults.noiseScroll) * 8.0
+                    )
+                );
+                material.uniforms.uParticleSizeMul.value = mixVal(
+                    particleParams.sizeMul,
+                    particleParams.sizeMul * THREE.MathUtils.clamp(1.0 + (tuner.alpha - diskTunerDefaults.alpha) * 0.08, 0.3, 3.0)
+                );
+                material.uniforms.uParticleConeStart.value = mixVal(particleParams.coneStart, tunedConeStart);
+                material.uniforms.uParticleConeEnd.value = mixVal(particleParams.coneEnd, tunedConeEnd);
+                material.uniforms.uParticleConeMin.value = mixVal(
+                    particleParams.coneMin,
+                    THREE.MathUtils.clamp(particleParams.coneMin + radialDelta * 0.35, 0.0, 1.0)
+                );
+            };
+
+            applyLayerParticleTuner(pMatBack, backDiskTuner);
+            applyLayerParticleTuner(pMatFront, frontDiskTuner);
             pMatBack.uniforms.uParticleColorLow.value.set(particleParams.colorLow);
             pMatFront.uniforms.uParticleColorLow.value.set(particleParams.colorLow);
             pMatBack.uniforms.uParticleColorMid.value.set(particleParams.colorMid);
