@@ -77,12 +77,9 @@
             uCoreBrightness: { value: 0.2 },
             uLensCenter: { value: new THREE.Vector2(0.5, 0.5) },
             uLensRadius: { value: 0.1 },
-            uLensStrength: { value: 0.5 },
-            uLensViewDamp: { value: 0.85 },
             uAspectRatio: { value: window.innerWidth / window.innerHeight },
             uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-            uFrontCoreMaskScale: { value: 0.98 },
-            uFrontAccretionSideTaper: { value: 0.45 }
+            uFrontCoreMaskScale: { value: 0.98 }
         };
 
         // --- 3. LAYER 1: GENERAL RELATIVITY RAYMARCHER ---
@@ -327,12 +324,9 @@
             uniform float uCoreBrightness;
             uniform vec2 uLensCenter;
             uniform float uLensRadius;
-            uniform float uLensStrength;
-            uniform float uLensViewDamp;
             uniform float uAspectRatio;
             uniform vec2 uViewport;
             uniform float uFrontCoreMaskScale;
-            uniform float uFrontAccretionSideTaper;
 
             varying vec3 vWorldPosition;
 
@@ -367,12 +361,7 @@
                     vec2 screenUv = gl_FragCoord.xy / uViewport;
                     vec2 coreDelta = screenUv - uLensCenter;
                     coreDelta.x *= uAspectRatio;
-                    float distToCenter = length(coreDelta);
-                    float camTilt = abs(normalize(uCameraPos).y);
-                    float effectiveStrength = uLensStrength * (1.0 - camTilt * uLensViewDamp);
-                    float deflection = effectiveStrength * (uLensRadius * uLensRadius) / max(distToCenter, 1e-4);
-                    float lensedDist = abs(distToCenter - deflection);
-                    if (lensedDist < uLensRadius * uFrontCoreMaskScale && backMask > 0.55) discard;
+                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale && backMask > 0.55) discard;
                 }
 
                 float r = length(vWorldPosition.xz);
@@ -414,13 +403,6 @@
                 float edgeBoost = 1.0 + (1.0 - viewAngle) * 1.5;
 
                 float alpha = outerFade * density * 1.2 * uLayerAlpha * passMask * edgeBoost;
-                if (uIsFront > 0.5) {
-                    float sideFactor = pow(abs(cos(angle)), 2.0);
-                    float sideFade = smoothstep(uRadiusLimit + 0.5, 14.0, r);
-                    float frontTaper = clamp(1.0 - uFrontAccretionSideTaper * sideFactor * sideFade, 0.0, 1.0);
-                    finalColor *= mix(1.0, 0.92, sideFactor * sideFade);
-                    alpha *= frontTaper;
-                }
                 gl_FragColor = vec4(finalColor, alpha);
             }
         `;
@@ -570,12 +552,9 @@
             uniform vec3 uParticleColorHigh;
             uniform vec2 uLensCenter;
             uniform float uLensRadius;
-            uniform float uLensStrength;
-            uniform float uLensViewDamp;
             uniform float uAspectRatio;
             uniform vec2 uViewport;
             uniform float uFrontCoreMaskScale;
-            uniform float uFrontAccretionSideTaper;
 
             varying float vDoppler;
             varying float vRadius;
@@ -591,12 +570,7 @@
                     vec2 screenUv = gl_FragCoord.xy / uViewport;
                     vec2 coreDelta = screenUv - uLensCenter;
                     coreDelta.x *= uAspectRatio;
-                    float distToCenter = length(coreDelta);
-                    float camTilt = abs(normalize(uCameraPos).y);
-                    float effectiveStrength = uLensStrength * (1.0 - camTilt * uLensViewDamp);
-                    float deflection = effectiveStrength * (uLensRadius * uLensRadius) / max(distToCenter, 1e-4);
-                    float lensedDist = abs(distToCenter - deflection);
-                    if (lensedDist < uLensRadius * uFrontCoreMaskScale && backMask > 0.55) discard;
+                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale && backMask > 0.55) discard;
                 }
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
@@ -615,13 +589,7 @@
                 float coneTaper = 1.0 - smoothstep(uParticleConeStart, uParticleConeEnd, vRadius);
                 float coreDrive = pow(max(uCoreBrightness, 0.0), uParticleCoreGamma);
                 float taperBoost = mix(uParticleConeMin, 1.0, coneTaper);
-                float frontSideTaper = 1.0;
-                if (uIsFront > 0.5) {
-                    float sideFactor = pow(abs(cos(atan(vWorldPosition.z, vWorldPosition.x))), 2.0);
-                    float sideFade = smoothstep(uRadiusLimit + 0.5, uParticleConeEnd + 6.0, vRadius);
-                    frontSideTaper = clamp(1.0 - uFrontAccretionSideTaper * sideFactor * sideFade, 0.0, 1.0);
-                }
-                gl_FragColor = vec4(color * beaming * uParticleBrightness * coreDrive * taperBoost, alpha * edgeFade * passMask * innerFade * taperBoost * frontSideTaper);
+                gl_FragColor = vec4(color * beaming * uParticleBrightness * coreDrive * taperBoost, alpha * edgeFade * passMask * innerFade * taperBoost);
             }
         `;
 
@@ -1126,8 +1094,6 @@
             lensingPass.uniforms.strength.value = wrapStrength;
             debugParams.resolvedWrapStrength = wrapStrength;
             lensingPass.uniforms.uCoreBrightness.value = params.diskBrightness;
-            sharedUniforms.uLensStrength.value = wrapStrength;
-            sharedUniforms.uLensViewDamp.value = debugParams.lensViewDamp;
 
             if (isExpanding) {
                 expansionTime += delta;
