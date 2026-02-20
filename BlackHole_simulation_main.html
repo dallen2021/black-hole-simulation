@@ -420,7 +420,7 @@
         `;
 
         const diskTunerDefaults = {
-            alpha: 1.0,
+            alpha: 0.5,
             innerOffset: 0.1,
             outerRadius: 14.0,
             tempPower: 1.8,
@@ -432,10 +432,11 @@
             outerFadeEnd: 14.0,
             edgeBoost: 1.5,
             radialMin: 0.35,
-            gasCoupling: 1.0
+            gasCoupling: 0.0
         };
         const backDiskTuner = { ...diskTunerDefaults };
         const frontDiskTuner = { ...diskTunerDefaults };
+        backDiskTuner.innerOffset = -1.0;
 
         const plasmaGeo = new THREE.PlaneGeometry(30, 30);
         const plasmaMatBack = new THREE.ShaderMaterial({
