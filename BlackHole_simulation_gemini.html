@@ -532,9 +532,6 @@
                     float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
                     float deflection = effectiveStrength * (radius * radius) / safeDist;
                     float sourceDist = dist - deflection;
-                    float sourceSign = sourceDist >= 0.0 ? 1.0 : -1.0;
-                    float minSampleRadius = radius * 1.015;
-                    sourceDist = sourceSign * max(abs(sourceDist), minSampleRadius);
 
                     vec2 dir = delta / safeDist;
                     vec2 distortedUv = center + dir * sourceDist * vec2(1.0 / aspectRatio, 1.0);
@@ -543,11 +540,7 @@
                     float inBounds = step(0.0, duv.x) * step(duv.x, 1.0) * step(0.0, duv.y) * step(duv.y, 1.0);
                     duv = clamp(duv, 0.0, 1.0);
                     vec4 warpedColor = texture2D(tDiffuse, duv);
-                    vec2 warpedDelta = duv - center;
-                    warpedDelta.x *= aspectRatio;
-                    float warpedDist = length(warpedDelta);
-                    float horizonSample = 1.0 - smoothstep(radius * 1.00, radius * 1.08, warpedDist);
-                    vec4 texColor = mix(baseColor, warpedColor, inBounds * (1.0 - 0.9 * horizonSample));
+                    vec4 texColor = mix(baseColor, warpedColor, inBounds);
 
                     // Gemini already raymarches the horizon shadow; avoid painting a second black disk here.
                     float horizonAbsorb = 1.0 - smoothstep(radius * 0.90, radius * 0.98, dist);
