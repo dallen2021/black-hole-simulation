@@ -74,7 +74,12 @@
             uCameraPos: { value: camera.position.clone() },
             uRadiusLimit: { value: 5.0 },
             uLayerAlpha: { value: 1.0 / 8.0 },
-            uCoreBrightness: { value: 3.0 }
+            uCoreBrightness: { value: 3.0 },
+            uLensCenter: { value: new THREE.Vector2(0.5, 0.5) },
+            uLensRadius: { value: 0.1 },
+            uAspectRatio: { value: window.innerWidth / window.innerHeight },
+            uViewport: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            uFrontCoreMaskScale: { value: 0.98 }
         };
 
         // --- 3. LAYER 1: GENERAL RELATIVITY RAYMARCHER ---
@@ -316,6 +321,11 @@
             uniform float uIsFront;
             uniform float uLayerAlpha;
             uniform float uCoreBrightness;
+            uniform vec2 uLensCenter;
+            uniform float uLensRadius;
+            uniform float uAspectRatio;
+            uniform vec2 uViewport;
+            uniform float uFrontCoreMaskScale;
 
             varying vec3 vWorldPosition;
 
@@ -344,22 +354,17 @@
                 // The back pass is lensed; the front pass overlays, producing the wrap illusion.
                 float passMask = 1.0;
 
+                // Prevent front-pass emission from leaking into the black-hole core.
+                if (uIsFront > 0.5) {
+                    vec2 screenUv = gl_FragCoord.xy / uViewport;
+                    vec2 coreDelta = screenUv - uLensCenter;
+                    coreDelta.x *= uAspectRatio;
+                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale) discard;
+                }
+
                 float r = length(vWorldPosition.xz);
                 float innerEdge = uRadiusLimit + 0.1;
                 if (r < innerEdge || r > 14.0) discard;
-
-                // True event-horizon occlusion: do not render disk fragments hidden behind the BH.
-                vec3 toPixel = vWorldPosition - uCameraPos;
-                float distToPixel = length(toPixel);
-                vec3 rayToPixel = toPixel / max(distToPixel, 0.0001);
-                float occRadius = uRadiusLimit * 1.02;
-                float occB = dot(uCameraPos, rayToPixel);
-                float occC = dot(uCameraPos, uCameraPos) - occRadius * occRadius;
-                float occH = occB * occB - occC;
-                if (occH > 0.0) {
-                    float tOcc = -occB - sqrt(occH);
-                    if (tOcc > 0.0 && tOcc < distToPixel) discard;
-                }
 
                 float effR = max(r, uRadiusLimit);
                 float temp = pow(uRadiusLimit / effR, 1.8);
@@ -514,6 +519,11 @@
             uniform float uInnerCutoff;
             uniform float uInnerFadeStart;
             uniform float uInnerFadeEnd;
+            uniform vec2 uLensCenter;
+            uniform float uLensRadius;
+            uniform float uAspectRatio;
+            uniform vec2 uViewport;
+            uniform float uFrontCoreMaskScale;
 
             varying float vDoppler;
             varying float vRadius;
@@ -524,18 +534,11 @@
                 // Match old behavior: render full particle set in both passes.
                 float passMask = 1.0;
                 if (vRadius < uRadiusLimit + uInnerCutoff) discard;
-
-                // True event-horizon occlusion for particles as well.
-                vec3 toParticle = vWorldPosition - uCameraPos;
-                float distToParticle = length(toParticle);
-                vec3 rayToParticle = toParticle / max(distToParticle, 0.0001);
-                float occRadius = uRadiusLimit * 1.02;
-                float occB = dot(uCameraPos, rayToParticle);
-                float occC = dot(uCameraPos, uCameraPos) - occRadius * occRadius;
-                float occH = occB * occB - occC;
-                if (occH > 0.0) {
-                    float tOcc = -occB - sqrt(occH);
-                    if (tOcc > 0.0 && tOcc < distToParticle) discard;
+                if (uIsFront > 0.5) {
+                    vec2 screenUv = gl_FragCoord.xy / uViewport;
+                    vec2 coreDelta = screenUv - uLensCenter;
+                    coreDelta.x *= uAspectRatio;
+                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale) discard;
                 }
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
@@ -761,6 +764,7 @@
             lensRingStart: 0.98,
             lensRingEnd: 1.05,
             lensRingIntensity: 1.5,
+            frontCoreMaskScale: 0.98,
             particleInnerCutoff: 0.08,
             particleInnerFadeStart: 0.12,
             particleInnerFadeEnd: 0.9,
@@ -803,6 +807,7 @@
         debugFolder.add(debugParams, 'lensRingStart', 0.0, 1.30, 0.001).name('Lens Ring Start');
         debugFolder.add(debugParams, 'lensRingEnd', 0.0, 1.60, 0.001).name('Lens Ring End');
         debugFolder.add(debugParams, 'lensRingIntensity', 0.0, 5.0, 0.01).name('Lens Ring Intensity');
+        debugFolder.add(debugParams, 'frontCoreMaskScale', 0.7, 1.3, 0.001).name('Front Core Mask');
         debugFolder.add(debugParams, 'particleInnerCutoff', -0.3, 1.5, 0.001).name('Particle Inner Cutoff');
         debugFolder.add(debugParams, 'particleInnerFadeStart', -0.3, 2.0, 0.001).name('Particle Fade Start');
         debugFolder.add(debugParams, 'particleInnerFadeEnd', 0.0, 3.0, 0.001).name('Particle Fade End');
@@ -830,6 +835,7 @@
         const cameraMat = new THREE.Matrix4();
         const bhWorldPos = new THREE.Vector3();
         const lookDir = new THREE.Vector3();
+        const drawBufferSize = new THREE.Vector2();
 
         function animate() {
             requestAnimationFrame(animate);
@@ -936,6 +942,12 @@
             const vFOV = THREE.MathUtils.degToRad(camera.fov);
             const viewHeight = 2 * Math.tan(vFOV * 0.5) * dist;
             lensingPass.uniforms.radius.value = (params.radius / Math.max(viewHeight, 0.0001)) * debugParams.lensRadiusScale;
+            sharedUniforms.uLensCenter.value.copy(lensingPass.uniforms.center.value);
+            sharedUniforms.uLensRadius.value = lensingPass.uniforms.radius.value;
+            sharedUniforms.uAspectRatio.value = lensingPass.uniforms.aspectRatio.value;
+            renderer.getDrawingBufferSize(drawBufferSize);
+            sharedUniforms.uViewport.value.copy(drawBufferSize);
+            sharedUniforms.uFrontCoreMaskScale.value = debugParams.frontCoreMaskScale;
             bgPass.enabled = debugParams.showRaymarchBackground;
             backPass.enabled = debugParams.showBackLayer;
             lensingPass.enabled = debugParams.showLensingPass;
@@ -952,6 +964,9 @@
             composer.setSize(window.innerWidth, window.innerHeight);
             raymarchMat.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
             lensingPass.uniforms.aspectRatio.value = window.innerWidth / window.innerHeight;
+            sharedUniforms.uAspectRatio.value = window.innerWidth / window.innerHeight;
+            renderer.getDrawingBufferSize(drawBufferSize);
+            sharedUniforms.uViewport.value.copy(drawBufferSize);
         });
 
         animate();
