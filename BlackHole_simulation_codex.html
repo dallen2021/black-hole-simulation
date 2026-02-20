@@ -363,9 +363,9 @@
                 uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
                 uTime: { value: 0 },
                 uSpinSpeed: { value: 0.1 },
-                uRadiusLimit: { value: 2.0 },
-                uDiskBrightness: { value: 4.0 },
-                uLensStrength: { value: 1.0 }
+                uRadiusLimit: { value: 5.0 },
+                uDiskBrightness: { value: 3.0 },
+                uLensStrength: { value: 0.5 }
             },
             vertexShader: raymarchVertexShader,
             fragmentShader: raymarchFragmentShader,
@@ -511,12 +511,12 @@
             uTime: { value: 0 },
             uSpinSpeed: { value: 0.1 },
             uCameraPos: { value: camera.position.clone() },
-            uRadiusLimit: { value: 2.0 },
+            uRadiusLimit: { value: 5.0 },
             uParticleBrightness: { value: 3.0 },
             uResolution: { value: new THREE.Vector2(renderer.domElement.width, renderer.domElement.height) },
             uLensCenter: { value: new THREE.Vector2(0.5, 0.5) },
             uLensRadius: { value: 0.1 },
-            uLensStrength: { value: 1.0 },
+            uLensStrength: { value: 0.5 },
             uAspectRatio: { value: window.innerWidth / window.innerHeight }
         };
 
@@ -548,7 +548,8 @@
                 tDiffuse: { value: null },
                 center: { value: new THREE.Vector2(0.5, 0.5) },
                 radius: { value: 0.1 },
-                strength: { value: 1.0 },
+                deflectRadius: { value: 0.04 },
+                strength: { value: 0.5 },
                 aspectRatio: { value: window.innerWidth / window.innerHeight },
                 uCameraPos: { value: camera.position.clone() }
             },
@@ -560,6 +561,7 @@
                 uniform sampler2D tDiffuse;
                 uniform vec2 center;
                 uniform float radius;
+                uniform float deflectRadius;
                 uniform float strength;
                 uniform float aspectRatio;
                 uniform vec3 uCameraPos;
@@ -581,7 +583,8 @@
                     float viewAngle = abs(normalize(uCameraPos).y);
                     float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
                     float safeDist = max(dist, 0.0001);
-                    float deflection = effectiveStrength * (radius * radius) / max(safeDist, radius * 0.30);
+                    float lensR = max(deflectRadius, 0.0001);
+                    float deflection = effectiveStrength * (lensR * lensR) / max(safeDist, lensR * 0.30);
                     float sourceDist = max(dist - deflection, radius * 1.02);
 
                     vec2 dir = delta / safeDist;
@@ -640,11 +643,11 @@
         const gui = new GUI({ title: 'Black Hole Physics' });
         const params = {
             spinSpeed: 0.1,
-            lensStrength: 1.0,
-            diskBrightness: 4.0,
+            lensStrength: 0.5,
+            diskBrightness: 3.0,
             particleBrightness: 3.0,
             showParticles: true,
-            radius: 2.0,
+            radius: 5.0,
             autoOrbit: false,
             expand: () => triggerExpansion()
         };
@@ -727,7 +730,10 @@
             const dist = camera.position.length();
             const vFOV = THREE.MathUtils.degToRad(camera.fov);
             const viewHeight = 2 * Math.tan(vFOV * 0.5) * dist;
-            lensingPass.uniforms.radius.value = params.radius / Math.max(viewHeight, 0.0001);
+            const coreRadiusScreen = params.radius / Math.max(viewHeight, 0.0001);
+            const shadowRadiusScreen = coreRadiusScreen * 2.5;
+            lensingPass.uniforms.deflectRadius.value = coreRadiusScreen;
+            lensingPass.uniforms.radius.value = shadowRadiusScreen;
 
             [pMatBack, pMatFront].forEach((mat) => {
                 mat.uniforms.uLensCenter.value.copy(lensingPass.uniforms.center.value);

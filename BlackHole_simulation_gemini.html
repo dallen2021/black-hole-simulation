@@ -80,6 +80,7 @@
             uniform float uSpinSpeed;
             uniform float uRadiusLimit;
             uniform float uDiskBrightness;
+            uniform float uLensStrength;
 
             varying vec2 vUv;
 
@@ -124,7 +125,7 @@
                     if(r < rs * 0.98) { hitHorizon = true; break; }
                     if(r > 150.0) { break; }
                     
-                    vec3 accel = -1.5 * h2 * rs * rayPos / (r2 * r2 * r);
+                    vec3 accel = -1.5 * uLensStrength * h2 * rs * rayPos / (r2 * r2 * r);
                     rayDir = normalize(rayDir + accel * dt);
                     
                     float r_xz = length(rayPos.xz);
@@ -212,8 +213,9 @@
                 uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
                 uTime: { value: 0 },
                 uSpinSpeed: { value: 1.0 },
-                uRadiusLimit: { value: 3.0 },
-                uDiskBrightness: { value: 5.0 }
+                uRadiusLimit: { value: 5.0 },
+                uDiskBrightness: { value: 3.0 },
+                uLensStrength: { value: 0.5 }
             },
             vertexShader: raymarchVertexShader,
             fragmentShader: raymarchFragmentShader,
@@ -341,7 +343,7 @@
                 uTime: { value: 0 },
                 uSpinSpeed: { value: 1.0 },
                 uCameraPos: { value: camera.position },
-                uRadiusLimit: { value: 3.0 },
+                uRadiusLimit: { value: 5.0 },
                 uParticleBrightness: { value: 2.0 }
             },
             vertexShader: particleVertexShader, fragmentShader: particleFragmentShader,
@@ -374,16 +376,22 @@
         // --- 6. CONTROLS & RENDER LOOP ---
         const gui = new GUI({ title: 'Black Hole Physics' });
         const params = {
-            spinSpeed: 0.5,
-            diskBrightness: 5.0,
-            particleBrightness: 2.5,
-            radius: 3.0,
-            autoOrbit: true,
+            spinSpeed: 0.1,
+            lensStrength: 0.5,
+            diskBrightness: 3.0,
+            particleBrightness: 3.0,
+            showParticles: true,
+            radius: 5.0,
+            autoOrbit: false,
             expand: () => triggerExpansion()
         };
         gui.add(params, 'spinSpeed', 0.0, 2.0).name('Time Scale');
+        gui.add(params, 'lensStrength', 0.0, 3.5).name('Lensing Strength');
         gui.add(params, 'diskBrightness', 0.0, 15.0).name('Core Brightness');
         gui.add(params, 'particleBrightness', 0.0, 6.0).name('Gas Brightness');
+        gui.add(params, 'showParticles').name('Show Particles').onChange((enabled) => {
+            pPass.enabled = enabled;
+        });
         gui.add(params, 'radius', 1.0, 8.0).name('Black Hole Mass').listen();
         gui.add(params, 'autoOrbit').name('Auto Camera Orbit');
         gui.add(params, 'expand').name('Simulate Growth');
@@ -422,6 +430,7 @@
             raymarchMat.uniforms.uTime.value = time;
             raymarchMat.uniforms.uSpinSpeed.value = params.spinSpeed;
             raymarchMat.uniforms.uDiskBrightness.value = params.diskBrightness;
+            raymarchMat.uniforms.uLensStrength.value = params.lensStrength;
 
             particleMat.uniforms.uCameraPos.value.copy(camera.position);
             particleMat.uniforms.uTime.value = time;
