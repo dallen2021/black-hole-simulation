@@ -41,6 +41,7 @@
         import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
         import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
         // --- 1. CORE SETUP ---
@@ -278,9 +279,9 @@
                 vec3 camDir = normalize(vec3(0.0) - uCameraPos);
                 float pixelDepth = dot(bhToPixel, camDir);
 
-                float backMask = smoothstep(-0.1, 0.1, pixelDepth);
-                float passMask = mix(backMask, 1.0 - backMask, uIsFront);
-                if (passMask <= 0.01) discard;
+                // Match old behavior: render full disk in both passes.
+                // The back pass is lensed; the front pass overlays, producing the wrap illusion.
+                float passMask = 1.0;
 
                 float r = length(vWorldPosition.xz);
                 float innerEdge = uRadiusLimit + 0.1;
@@ -443,27 +444,8 @@
             varying vec3 vWorldPosition;
 
             void main() {
-                float backMask = smoothstep(-0.1, 0.1, vPixelDepth);
-                float passMask = mix(backMask, 1.0 - backMask, uIsFront);
-                if (passMask <= 0.01) discard;
-
-                vec3 toParticle = vWorldPosition - uCameraPos;
-                float distToParticle = length(toParticle);
-                vec3 rayDir = toParticle / max(distToParticle, 0.0001);
-
-                float shadowRadius = uRadiusLimit * 2.5;
-                float b = dot(uCameraPos, rayDir);
-                float c = dot(uCameraPos, uCameraPos) - shadowRadius * shadowRadius;
-                float d = b * b - c;
-                float occlusionMask = 1.0;
-                if (d > 0.0) {
-                    float t = -b - sqrt(d);
-                    if (t > 0.0 && t < distToParticle) {
-                        float lift = abs(vWorldPosition.y);
-                        occlusionMask = smoothstep(shadowRadius * 0.18, shadowRadius * 0.95, lift);
-                        if (occlusionMask <= 0.01) discard;
-                    }
-                }
+                // Match old behavior: render full particle set in both passes.
+                float passMask = 1.0;
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
@@ -478,7 +460,7 @@
                 float beaming = 1.0 + vDoppler * 0.7;
                 float edgeFade = 1.0 - smoothstep(15.0, 24.0, vRadius);
 
-                gl_FragColor = vec4(color * beaming * uParticleBrightness * uCoreBrightness, alpha * edgeFade * passMask * occlusionMask);
+                gl_FragColor = vec4(color * beaming * uParticleBrightness * uCoreBrightness, alpha * edgeFade * passMask);
             }
         `;
 
@@ -505,8 +487,66 @@
         sceneBack.add(backParticles);
         sceneFront.add(frontParticles);
 
+        // --- 5. POST LENSING PASS (back layer only) ---
+        const LensingShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                center: { value: new THREE.Vector2(0.5, 0.5) },
+                radius: { value: 0.1 },
+                strength: { value: 0.5 },
+                aspectRatio: { value: window.innerWidth / window.innerHeight },
+                uCameraPos: { value: camera.position.clone() },
+                uCoreBrightness: { value: 3.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform vec2 center;
+                uniform float radius;
+                uniform float strength;
+                uniform float aspectRatio;
+                uniform vec3 uCameraPos;
+                uniform float uCoreBrightness;
+                varying vec2 vUv;
 
-        // --- 5. PIPELINE ---
+                void main() {
+                    vec2 uv = vUv;
+                    vec2 delta = uv - center;
+                    delta.x *= aspectRatio;
+                    float dist = length(delta);
+                    float safeDist = max(dist, 0.0001);
+
+                    if (dist < radius * 0.98) {
+                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                        return;
+                    }
+
+                    float viewAngle = abs(normalize(uCameraPos).y);
+                    float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
+                    float deflection = effectiveStrength * (radius * radius) / safeDist;
+                    float sourceDist = dist - deflection;
+
+                    vec2 dir = delta / safeDist;
+                    vec2 distortedUv = center + dir * sourceDist * vec2(1.0 / aspectRatio, 1.0);
+
+                    vec2 duv = distortedUv;
+                    float inBounds = step(0.0, duv.x) * step(duv.x, 1.0) * step(0.0, duv.y) * step(duv.y, 1.0);
+                    duv = clamp(duv, 0.0, 1.0);
+                    vec4 texColor = texture2D(tDiffuse, duv) * inBounds;
+
+                    float photonRing = 1.0 - smoothstep(radius * 0.98, radius * 1.05, dist);
+                    vec4 ringColor = vec4(1.0, 0.9, 0.7, 1.0) * photonRing * (1.5 * uCoreBrightness);
+
+                    gl_FragColor = texColor + ringColor;
+                }
+            `
+        };
+
+
+        // --- 6. PIPELINE ---
         const composer = new EffectComposer(renderer);
         
         // Pass 1: Draw the heavily mathematical curved spacetime background
@@ -520,18 +560,24 @@
         backPass.clear = false;
         composer.addPass(backPass);
 
-        // Pass 3: Front layer (disk + particles)
+        // Pass 3: Lens only the back layer before front overlays
+        const lensingPass = new ShaderPass(LensingShader);
+        lensingPass.material.depthTest = false;
+        lensingPass.material.depthWrite = false;
+        composer.addPass(lensingPass);
+
+        // Pass 4: Front layer (disk + particles)
         const frontPass = new RenderPass(sceneFront, camera);
         frontPass.clear = false;
         frontPass.clearDepth = true;
         composer.addPass(frontPass);
 
-        // Pass 4: Cinematic Bloom
+        // Pass 5: Cinematic Bloom
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.8, 0.5, 0.85);
         bloomPass.threshold = 0.2;
         composer.addPass(bloomPass);
 
-        // --- 6. CONTROLS & RENDER LOOP ---
+        // --- 7. CONTROLS & RENDER LOOP ---
         const gui = new GUI({ title: 'Black Hole Physics' });
         const params = {
             spinSpeed: 0.1,
@@ -568,6 +614,7 @@
 
         const clock = new THREE.Clock();
         const cameraMat = new THREE.Matrix4();
+        const bhWorldPos = new THREE.Vector3();
 
         function animate() {
             requestAnimationFrame(animate);
@@ -597,6 +644,9 @@
             sharedUniforms.uCoreBrightness.value = params.diskBrightness;
             pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
             pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
+            lensingPass.uniforms.uCameraPos.value.copy(camera.position);
+            lensingPass.uniforms.strength.value = params.lensStrength;
+            lensingPass.uniforms.uCoreBrightness.value = params.diskBrightness;
 
             if (isExpanding) {
                 expansionTime += delta;
@@ -609,6 +659,14 @@
 
             raymarchMat.uniforms.uRadiusLimit.value = params.radius;
             sharedUniforms.uRadiusLimit.value = params.radius;
+            
+            bhWorldPos.set(0, 0, 0).project(camera);
+            lensingPass.uniforms.center.value.set((bhWorldPos.x + 1) * 0.5, (bhWorldPos.y + 1) * 0.5);
+
+            const dist = camera.position.length();
+            const vFOV = THREE.MathUtils.degToRad(camera.fov);
+            const viewHeight = 2 * Math.tan(vFOV * 0.5) * dist;
+            lensingPass.uniforms.radius.value = params.radius / Math.max(viewHeight, 0.0001);
 
             composer.render();
         }
@@ -619,6 +677,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             composer.setSize(window.innerWidth, window.innerHeight);
             raymarchMat.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+            lensingPass.uniforms.aspectRatio.value = window.innerWidth / window.innerHeight;
         });
 
         animate();
