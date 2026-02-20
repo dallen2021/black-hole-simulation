@@ -292,7 +292,8 @@
                     if(r < rs * 0.98) { hitHorizon = true; break; }
                     if(r > 150.0) { break; }
                     
-                    vec3 accel = -1.5 * uLensStrength * h2 * rs * rayPos / (r2 * r2 * r);
+                    // Keep core shadow size primarily mass-driven; lensStrength is handled in post-lensing.
+                    vec3 accel = -1.5 * h2 * rs * rayPos / (r2 * r2 * r);
                     rayDir = normalize(rayDir + accel * dt);
                     
                     float r_xz = length(rayPos.xz);
@@ -473,7 +474,7 @@
                 vec2 lensDelta = screenUv - uLensCenter;
                 lensDelta.x *= uAspectRatio;
                 float lensDist = length(lensDelta);
-                float lensShadowRadius = uLensRadius * (1.0 + uLensStrength * 0.35);
+                float lensShadowRadius = uLensRadius * 1.02;
                 if (lensDist < lensShadowRadius * 0.99) discard;
 
                 // Prevent particles from rendering through the black-hole shadow.
@@ -570,17 +571,37 @@
                     delta.x *= aspectRatio;
                     float dist = length(delta);
 
+                    // Keep the rendered event-horizon core unchanged.
+                    vec4 originalColor = texture2D(tDiffuse, uv);
+                    if (dist < radius * 1.02) {
+                        gl_FragColor = originalColor;
+                        return;
+                    }
+
                     float viewAngle = abs(normalize(uCameraPos).y);
                     float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
                     float safeDist = max(dist, 0.0001);
-                    float deflection = effectiveStrength * (radius * radius) / max(safeDist, radius * 0.08);
-                    float sourceDist = dist - deflection;
+                    float deflection = effectiveStrength * (radius * radius) / max(safeDist, radius * 0.30);
+                    float sourceDist = max(dist - deflection, radius * 1.02);
 
                     vec2 dir = delta / safeDist;
                     vec2 distortedUv = center + dir * sourceDist * vec2(1.0 / aspectRatio, 1.0);
+                    float inBounds =
+                        step(0.0, distortedUv.x) * step(distortedUv.x, 1.0) *
+                        step(0.0, distortedUv.y) * step(distortedUv.y, 1.0);
+                    vec4 warpedColor = texture2D(tDiffuse, clamp(distortedUv, 0.0, 1.0));
+                    warpedColor = mix(originalColor, warpedColor, inBounds);
 
-                    vec4 texColor = texture2D(tDiffuse, clamp(distortedUv, 0.0, 1.0));
-                    gl_FragColor = texColor;
+                    // Do not let lensing spread blackness into already lit pixels.
+                    float originalLum = dot(originalColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+                    float warpedLum = dot(warpedColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+                    float blackPull = smoothstep(0.02, 0.18, originalLum) * (1.0 - smoothstep(0.005, 0.05, warpedLum));
+                    float luminous = smoothstep(0.015, 0.22, max(originalLum, warpedLum));
+                    float warpAmount = luminous * (1.0 - blackPull);
+
+                    vec4 blended = mix(originalColor, warpedColor, warpAmount);
+                    blended.rgb = max(blended.rgb, originalColor.rgb);
+                    gl_FragColor = blended;
                 }
             `
         };
