@@ -446,6 +446,7 @@
             void main() {
                 // Match old behavior: render full particle set in both passes.
                 float passMask = 1.0;
+                if (vRadius < uRadiusLimit + 0.08) discard;
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
@@ -459,8 +460,9 @@
 
                 float beaming = 1.0 + vDoppler * 0.7;
                 float edgeFade = 1.0 - smoothstep(15.0, 24.0, vRadius);
+                float innerFade = smoothstep(uRadiusLimit + 0.12, uRadiusLimit + 0.9, vRadius);
 
-                gl_FragColor = vec4(color * beaming * uParticleBrightness * uCoreBrightness, alpha * edgeFade * passMask);
+                gl_FragColor = vec4(color * beaming * uParticleBrightness * uCoreBrightness, alpha * edgeFade * passMask * innerFade);
             }
         `;
 
@@ -518,6 +520,13 @@
                     delta.x *= aspectRatio;
                     float dist = length(delta);
                     float safeDist = max(dist, 0.0001);
+                    vec4 baseColor = texture2D(tDiffuse, uv);
+
+                    // Preserve underlying horizon from Gemini raymarch in the center.
+                    if (dist < radius * 0.98) {
+                        gl_FragColor = baseColor;
+                        return;
+                    }
 
                     float viewAngle = abs(normalize(uCameraPos).y);
                     float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
@@ -530,7 +539,8 @@
                     vec2 duv = distortedUv;
                     float inBounds = step(0.0, duv.x) * step(duv.x, 1.0) * step(0.0, duv.y) * step(duv.y, 1.0);
                     duv = clamp(duv, 0.0, 1.0);
-                    vec4 texColor = texture2D(tDiffuse, duv) * inBounds;
+                    vec4 warpedColor = texture2D(tDiffuse, duv);
+                    vec4 texColor = mix(baseColor, warpedColor, inBounds);
 
                     // Gemini already raymarches the horizon shadow; avoid painting a second black disk here.
                     float horizonAbsorb = 1.0 - smoothstep(radius * 0.90, radius * 0.98, dist);
