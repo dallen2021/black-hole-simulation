@@ -61,10 +61,20 @@
         controls.maxDistance = 90;
 
         // --- 2. HYBRID SCENE ARCHITECTURE ---
-        const sceneRaymarch = new THREE.Scene();  // For the curved spacetime quad
-        const sceneParticles = new THREE.Scene(); // For the rasterized 3D particles
+        const sceneRaymarch = new THREE.Scene();  // Keep Gemini black-hole/lensing core
+        const sceneBack = new THREE.Scene();      // Old-style back layer for wrap-around
+        const sceneFront = new THREE.Scene();     // Old-style front layer for wrap-around
 
         const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+        const sharedUniforms = {
+            uTime: { value: 0 },
+            uSpinSpeed: { value: 0.1 },
+            uCameraPos: { value: camera.position.clone() },
+            uRadiusLimit: { value: 5.0 },
+            uLayerAlpha: { value: 1.0 / 8.0 },
+            uCoreBrightness: { value: 3.0 }
+        };
 
         // --- 3. LAYER 1: GENERAL RELATIVITY RAYMARCHER ---
         const raymarchVertexShader = `
@@ -133,7 +143,8 @@
                     // CRITICAL FIX: Add the ISCO (Innermost Stable Circular Orbit) gap
                     float isco = rs * 1.35;
                     
-                    if(r_xz > isco && r_xz < 28.0) {
+                    // Disk visuals come from layered plasma meshes below; keep raymarch for BH/lensing.
+                    if(false && r_xz > isco && r_xz < 28.0) {
                         float scaleHeight = 0.03 * rs + pow(max(0.0, r_xz - isco)/15.0, 2.0) * 0.25;
                         float yDist = abs(rayPos.y);
                         float verticalFade = exp(-yDist * yDist / (scaleHeight * scaleHeight));
@@ -197,7 +208,7 @@
                     vec3 roomCol = mix(vec3(0.015, 0.015, 0.02), vec3(0.0), clamp(line, 0.0, 1.0));
                     
                     float dist = length(boxPos);
-                    roomCol += vec3(1.0, 0.5, 0.1) * (150.0 * rs / (dist * dist)); 
+                    roomCol += vec3(1.0, 0.5, 0.1) * (150.0 * rs / (dist * dist)) * (0.2 + 0.2 * uDiskBrightness); 
                     
                     color.rgb += (1.0 - color.a) * roomCol;
                 }
@@ -226,25 +237,147 @@
         sceneRaymarch.add(quad);
 
 
-        // --- 4. LAYER 2: 3D VOLUMETRIC PARTICLES ---
-        const particleCount = 60000; 
+        // --- 4. LAYER 2: OLD-STYLE ACCRETION DISK + WRAPPED PARTICLES ---
+        const plasmaVertexShader = `
+            varying vec3 vWorldPosition;
+            void main() {
+                vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+                gl_Position = projectionMatrix * viewMatrix * vec4(vWorldPosition, 1.0);
+            }
+        `;
+
+        const plasmaFragmentShader = `
+            uniform float uTime;
+            uniform float uSpinSpeed;
+            uniform vec3 uCameraPos;
+            uniform float uRadiusLimit;
+            uniform float uIsFront;
+            uniform float uLayerAlpha;
+            uniform float uCoreBrightness;
+
+            varying vec3 vWorldPosition;
+
+            float random(in vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+            float noise(in vec2 st) {
+                vec2 i = floor(st); vec2 f = fract(st);
+                float a = random(i); float b = random(i + vec2(1.0, 0.0));
+                float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+            }
+            float fbm(vec2 st) {
+                float value = 0.0; float amp = 0.5;
+                for (int i = 0; i < 4; i++) {
+                    value += amp * noise(st); st *= 2.0; amp *= 0.5;
+                }
+                return value;
+            }
+
+            void main() {
+                vec3 bhToPixel = vWorldPosition;
+                vec3 camDir = normalize(vec3(0.0) - uCameraPos);
+                float pixelDepth = dot(bhToPixel, camDir);
+
+                float backMask = smoothstep(-0.1, 0.1, pixelDepth);
+                float passMask = mix(backMask, 1.0 - backMask, uIsFront);
+                if (passMask <= 0.01) discard;
+
+                float r = length(vWorldPosition.xz);
+                float innerEdge = uRadiusLimit + 0.1;
+                if (r < innerEdge || r > 14.0) discard;
+
+                float effR = max(r, uRadiusLimit);
+                float temp = pow(uRadiusLimit / effR, 1.8);
+                vec3 color = mix(vec3(0.5, 0.05, 0.0), vec3(1.0, 0.3, 0.0), smoothstep(0.0, 0.3, temp));
+                color = mix(color, vec3(1.0, 0.8, 0.2), smoothstep(0.3, 0.7, temp));
+                color = mix(color, vec3(1.0, 1.0, 1.0), smoothstep(0.7, 1.0, temp));
+
+                float angle = atan(vWorldPosition.z, vWorldPosition.x);
+                vec3 velocityDir = normalize(vec3(-sin(angle), 0.0, cos(angle)));
+                vec3 viewDir = normalize(uCameraPos - vWorldPosition);
+                float doppler = dot(velocityDir, viewDir);
+                float beaming = 1.0 + doppler * 0.7;
+
+                float omega = (2.0 * uSpinSpeed) * pow(uRadiusLimit / effR, 0.65);
+                float c = cos(uTime * omega);
+                float s = sin(uTime * omega);
+                mat2 rot = mat2(c, s, -s, c);
+
+                vec2 p = rot * (vWorldPosition.xz * 0.28);
+                vec2 w = vec2(fbm(p + vec2(2.1, 5.7)), fbm(p + vec2(8.3, 1.3)));
+                p += (w - 0.5) * 2.2;
+
+                float gas = fbm(p * 1.7 + vec2(0.0, uTime * 0.12));
+                float density = mix(0.1, 1.0, smoothstep(0.3, 0.8, gas));
+
+                float photonRing = 1.0 - smoothstep(uRadiusLimit, uRadiusLimit + 0.3, r);
+                vec3 finalColor = (color * beaming * 2.0) + (vec3(1.0, 0.9, 0.6) * photonRing * 3.5);
+                finalColor *= uCoreBrightness;
+
+                float outerFade = 1.0 - smoothstep(10.0, 14.0, r);
+                float viewAngle = abs(normalize(uCameraPos).y);
+                float edgeBoost = 1.0 + (1.0 - viewAngle) * 1.5;
+
+                float alpha = outerFade * density * 1.2 * uLayerAlpha * passMask * edgeBoost;
+                gl_FragColor = vec4(finalColor, alpha);
+            }
+        `;
+
+        const plasmaGeo = new THREE.PlaneGeometry(30, 30);
+        const plasmaMatBack = new THREE.ShaderMaterial({
+            uniforms: { ...sharedUniforms, uIsFront: { value: 0.0 } },
+            vertexShader: plasmaVertexShader,
+            fragmentShader: plasmaFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide
+        });
+        const plasmaMatFront = new THREE.ShaderMaterial({
+            uniforms: { ...sharedUniforms, uIsFront: { value: 1.0 } },
+            vertexShader: plasmaVertexShader,
+            fragmentShader: plasmaFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide
+        });
+        plasmaMatFront.depthTest = false;
+
+        const DISK_LAYERS = 8;
+        const DISK_THICKNESS = 0.25;
+        for (let i = 0; i < DISK_LAYERS; i++) {
+            const t = i / (DISK_LAYERS - 1);
+            const y = THREE.MathUtils.lerp(-DISK_THICKNESS * 0.5, DISK_THICKNESS * 0.5, t);
+
+            const b = new THREE.Mesh(plasmaGeo, plasmaMatBack);
+            b.rotation.x = -Math.PI / 2;
+            b.position.y = y;
+            sceneBack.add(b);
+
+            const f = new THREE.Mesh(plasmaGeo, plasmaMatFront);
+            f.rotation.x = -Math.PI / 2;
+            f.position.y = y;
+            sceneFront.add(f);
+        }
+
+        const particleCount = 60000;
         const particlePositions = new Float32Array(particleCount * 3);
         const particleAngles = new Float32Array(particleCount);
         const particleRadii = new Float32Array(particleCount);
         const particleSizes = new Float32Array(particleCount);
 
         for (let i = 0; i < particleCount; i++) {
-            // Push particles mostly to the outer edges to create a massive atmosphere
-            const r = 8.0 + Math.pow(Math.random(), 1.5) * 22.0;
+            const r = Math.pow(Math.random(), 1.5) * 24.0;
             const theta = Math.random() * Math.PI * 2;
-            
+
             particleRadii[i] = r;
             particleAngles[i] = theta;
-            particleSizes[i] = (Math.random() * 1.5 + 0.5) * (r / 10.0); 
+            particleSizes[i] = (Math.random() * 1.5 + 0.5) * (r / 10.0);
 
             particlePositions[i * 3] = r * Math.cos(theta);
-            const verticalSpread = Math.pow(Math.max(0.0, r - 3.0) / 15.0, 2.0) * 2.2; 
-            particlePositions[i * 3 + 1] = (Math.random() - 0.5) * verticalSpread; 
+            const verticalSpread = Math.pow(Math.max(0.0, r - 3.0) / 15.0, 2.0) * 2.2;
+            particlePositions[i * 3 + 1] = (Math.random() - 0.5) * verticalSpread;
             particlePositions[i * 3 + 2] = r * Math.sin(theta);
         }
 
@@ -258,100 +391,119 @@
             uniform float uTime;
             uniform float uSpinSpeed;
             uniform vec3 uCameraPos;
-            
+            uniform float uRadiusLimit;
+
             attribute float aAngle;
             attribute float aRadius;
             attribute float aSize;
-            
+
             varying float vDoppler;
             varying float vRadius;
+            varying float vPixelDepth;
             varying vec3 vWorldPosition;
 
             void main() {
                 vRadius = aRadius;
-                float speed = 18.0 / sqrt(aRadius);
+                float effR = max(aRadius, uRadiusLimit);
+                float speed = 18.0 / sqrt(effR);
                 float currentAngle = aAngle + (uTime * speed * uSpinSpeed);
-                
+
                 vec3 newPos = position;
                 newPos.x = aRadius * cos(currentAngle);
                 newPos.z = aRadius * sin(currentAngle);
-                newPos.y += sin(uTime * 1.5 + aAngle * 10.0) * 0.25; // Turbulent bobbing
+                newPos.y += sin(uTime * 1.5 + aAngle * 10.0) * 0.15;
 
-                vec4 worldPos = modelMatrix * vec4(newPos, 1.0);
-                vWorldPosition = worldPos.xyz;
+                vec4 worldPosition = modelMatrix * vec4(newPos, 1.0);
+                vWorldPosition = worldPosition.xyz;
+
+                vec3 bhToPixel = worldPosition.xyz;
+                vec3 camDir = normalize(vec3(0.0) - uCameraPos);
+                vPixelDepth = dot(bhToPixel, camDir);
 
                 vec3 velocityDir = normalize(vec3(-sin(currentAngle), 0.0, cos(currentAngle)));
-                vec3 viewDir = normalize(uCameraPos - worldPos.xyz);
+                vec3 viewDir = normalize(uCameraPos - worldPosition.xyz);
                 vDoppler = dot(velocityDir, viewDir);
 
-                vec4 mvPosition = viewMatrix * worldPos;
-                gl_PointSize = (aSize * 100.0) / -mvPosition.z;
+                vec4 mvPosition = viewMatrix * worldPosition;
+                gl_PointSize = (aSize * 90.0) / -mvPosition.z;
                 gl_Position = projectionMatrix * mvPosition;
             }
         `;
 
         const particleFragmentShader = `
             uniform float uRadiusLimit;
+            uniform float uIsFront;
             uniform vec3 uCameraPos;
             uniform float uParticleBrightness;
-            
+            uniform float uCoreBrightness;
+
             varying float vDoppler;
             varying float vRadius;
+            varying float vPixelDepth;
             varying vec3 vWorldPosition;
 
             void main() {
-                // OCCLUSION HACK: Mathematically hide particles that fall behind the black hole shadow
+                float backMask = smoothstep(-0.1, 0.1, vPixelDepth);
+                float passMask = mix(backMask, 1.0 - backMask, uIsFront);
+                if (passMask <= 0.01) discard;
+
                 vec3 toParticle = vWorldPosition - uCameraPos;
                 float distToParticle = length(toParticle);
-                vec3 rayDir = toParticle / distToParticle;
+                vec3 rayDir = toParticle / max(distToParticle, 0.0001);
 
-                // The visual shadow of a black hole is ~2.5x larger than its physical radius
-                float shadowRadius = uRadiusLimit * 2.5; 
+                float shadowRadius = uRadiusLimit * 2.5;
                 float b = dot(uCameraPos, rayDir);
                 float c = dot(uCameraPos, uCameraPos) - shadowRadius * shadowRadius;
                 float d = b * b - c;
-
+                float occlusionMask = 1.0;
                 if (d > 0.0) {
                     float t = -b - sqrt(d);
                     if (t > 0.0 && t < distToParticle) {
-                        discard; // Particle is hidden behind the void!
+                        float lift = abs(vWorldPosition.y);
+                        occlusionMask = smoothstep(shadowRadius * 0.18, shadowRadius * 0.95, lift);
+                        if (occlusionMask <= 0.01) discard;
                     }
                 }
 
-                // Soft Cloud Texture
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
                 if (dist > 0.5) discard;
-                float alpha = exp(-dist * dist * 12.0) * 0.15; 
-                
-                float isco = uRadiusLimit * 1.35;
-                float effR = max(vRadius, isco);
-                float temp = pow(isco / effR, 1.8); 
+                float alpha = exp(-dist * dist * 12.0) * 0.18;
+
+                float effR = max(vRadius, uRadiusLimit);
+                float temp = pow(uRadiusLimit / effR, 1.8);
                 vec3 color = mix(vec3(0.6, 0.1, 0.0), vec3(1.0, 0.5, 0.1), smoothstep(0.0, 0.4, temp));
                 color = mix(color, vec3(1.0, 0.9, 0.8), smoothstep(0.4, 1.0, temp));
 
-                // Match the new balanced beaming from the raymarcher
-                float beaming = 1.0 + vDoppler * 0.8;
-                float edgeFade = 1.0 - smoothstep(15.0, 28.0, vRadius);
+                float beaming = 1.0 + vDoppler * 0.7;
+                float edgeFade = 1.0 - smoothstep(15.0, 24.0, vRadius);
 
-                gl_FragColor = vec4(color * beaming * uParticleBrightness, alpha * edgeFade);
+                gl_FragColor = vec4(color * beaming * uParticleBrightness * uCoreBrightness, alpha * edgeFade * passMask * occlusionMask);
             }
         `;
 
-        const particleMat = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uSpinSpeed: { value: 1.0 },
-                uCameraPos: { value: camera.position },
-                uRadiusLimit: { value: 5.0 },
-                uParticleBrightness: { value: 2.0 }
-            },
-            vertexShader: particleVertexShader, fragmentShader: particleFragmentShader,
-            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+        const pMatBack = new THREE.ShaderMaterial({
+            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uIsFront: { value: 0.0 } },
+            vertexShader: particleVertexShader,
+            fragmentShader: particleFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
         });
-        
-        const particles = new THREE.Points(particleGeo, particleMat);
-        sceneParticles.add(particles);
+        const pMatFront = new THREE.ShaderMaterial({
+            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uIsFront: { value: 1.0 } },
+            vertexShader: particleVertexShader,
+            fragmentShader: particleFragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+        pMatFront.depthTest = false;
+
+        const backParticles = new THREE.Points(particleGeo, pMatBack);
+        const frontParticles = new THREE.Points(particleGeo, pMatFront);
+        sceneBack.add(backParticles);
+        sceneFront.add(frontParticles);
 
 
         // --- 5. PIPELINE ---
@@ -363,12 +515,18 @@
         bgPass.clearAlpha = 1.0;
         composer.addPass(bgPass);
 
-        // Pass 2: Overlay the 3D particles on top (Without clearing the background!)
-        const pPass = new RenderPass(sceneParticles, camera);
-        pPass.clear = false;
-        composer.addPass(pPass);
+        // Pass 2: Back layer (disk + particles)
+        const backPass = new RenderPass(sceneBack, camera);
+        backPass.clear = false;
+        composer.addPass(backPass);
 
-        // Pass 3: Cinematic Bloom
+        // Pass 3: Front layer (disk + particles)
+        const frontPass = new RenderPass(sceneFront, camera);
+        frontPass.clear = false;
+        frontPass.clearDepth = true;
+        composer.addPass(frontPass);
+
+        // Pass 4: Cinematic Bloom
         const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.8, 0.5, 0.85);
         bloomPass.threshold = 0.2;
         composer.addPass(bloomPass);
@@ -390,7 +548,8 @@
         gui.add(params, 'diskBrightness', 0.0, 15.0).name('Core Brightness');
         gui.add(params, 'particleBrightness', 0.0, 6.0).name('Gas Brightness');
         gui.add(params, 'showParticles').name('Show Particles').onChange((enabled) => {
-            pPass.enabled = enabled;
+            backParticles.visible = enabled;
+            frontParticles.visible = enabled;
         });
         gui.add(params, 'radius', 1.0, 8.0).name('Black Hole Mass').listen();
         gui.add(params, 'autoOrbit').name('Auto Camera Orbit');
@@ -431,11 +590,13 @@
             raymarchMat.uniforms.uSpinSpeed.value = params.spinSpeed;
             raymarchMat.uniforms.uDiskBrightness.value = params.diskBrightness;
             raymarchMat.uniforms.uLensStrength.value = params.lensStrength;
-
-            particleMat.uniforms.uCameraPos.value.copy(camera.position);
-            particleMat.uniforms.uTime.value = time;
-            particleMat.uniforms.uSpinSpeed.value = params.spinSpeed;
-            particleMat.uniforms.uParticleBrightness.value = params.particleBrightness;
+            
+            sharedUniforms.uCameraPos.value.copy(camera.position);
+            sharedUniforms.uTime.value = time;
+            sharedUniforms.uSpinSpeed.value = params.spinSpeed;
+            sharedUniforms.uCoreBrightness.value = params.diskBrightness;
+            pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
+            pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
 
             if (isExpanding) {
                 expansionTime += delta;
@@ -447,7 +608,7 @@
             }
 
             raymarchMat.uniforms.uRadiusLimit.value = params.radius;
-            particleMat.uniforms.uRadiusLimit.value = params.radius;
+            sharedUniforms.uRadiusLimit.value = params.radius;
 
             composer.render();
         }
