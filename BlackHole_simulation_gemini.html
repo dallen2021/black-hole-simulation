@@ -92,6 +92,8 @@
             uniform float uRadiusLimit;
             uniform float uDiskBrightness;
             uniform float uLensStrength;
+            uniform float uGravityK;
+            uniform float uHorizonHit;
 
             varying vec2 vUv;
 
@@ -133,10 +135,10 @@
                     float r2 = dot(rayPos, rayPos);
                     float r = sqrt(r2);
                     
-                    if(r < rs * 0.98) { hitHorizon = true; break; }
+                    if(r < rs * uHorizonHit) { hitHorizon = true; break; }
                     if(r > 150.0) { break; }
                     
-                    vec3 accel = -1.5 * uLensStrength * h2 * rs * rayPos / (r2 * r2 * r);
+                    vec3 accel = -uGravityK * uLensStrength * h2 * rs * rayPos / (r2 * r2 * r);
                     rayDir = normalize(rayDir + accel * dt);
                     
                     float r_xz = length(rayPos.xz);
@@ -227,7 +229,9 @@
                 uSpinSpeed: { value: 1.0 },
                 uRadiusLimit: { value: 5.0 },
                 uDiskBrightness: { value: 3.0 },
-                uLensStrength: { value: 0.5 }
+                uLensStrength: { value: 0.5 },
+                uGravityK: { value: 1.5 },
+                uHorizonHit: { value: 0.98 }
             },
             vertexShader: raymarchVertexShader,
             fragmentShader: raymarchFragmentShader,
@@ -437,6 +441,9 @@
             uniform vec3 uCameraPos;
             uniform float uParticleBrightness;
             uniform float uCoreBrightness;
+            uniform float uInnerCutoff;
+            uniform float uInnerFadeStart;
+            uniform float uInnerFadeEnd;
 
             varying float vDoppler;
             varying float vRadius;
@@ -446,7 +453,7 @@
             void main() {
                 // Match old behavior: render full particle set in both passes.
                 float passMask = 1.0;
-                if (vRadius < uRadiusLimit + 0.08) discard;
+                if (vRadius < uRadiusLimit + uInnerCutoff) discard;
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
@@ -460,14 +467,14 @@
 
                 float beaming = 1.0 + vDoppler * 0.7;
                 float edgeFade = 1.0 - smoothstep(15.0, 24.0, vRadius);
-                float innerFade = smoothstep(uRadiusLimit + 0.12, uRadiusLimit + 0.9, vRadius);
+                float innerFade = smoothstep(uRadiusLimit + uInnerFadeStart, uRadiusLimit + uInnerFadeEnd, vRadius);
 
                 gl_FragColor = vec4(color * beaming * uParticleBrightness * uCoreBrightness, alpha * edgeFade * passMask * innerFade);
             }
         `;
 
         const pMatBack = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uIsFront: { value: 0.0 } },
+            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uInnerCutoff: { value: 0.08 }, uInnerFadeStart: { value: 0.12 }, uInnerFadeEnd: { value: 0.9 }, uIsFront: { value: 0.0 } },
             vertexShader: particleVertexShader,
             fragmentShader: particleFragmentShader,
             transparent: true,
@@ -475,7 +482,7 @@
             blending: THREE.AdditiveBlending
         });
         const pMatFront = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uIsFront: { value: 1.0 } },
+            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uInnerCutoff: { value: 0.08 }, uInnerFadeStart: { value: 0.12 }, uInnerFadeEnd: { value: 0.9 }, uIsFront: { value: 1.0 } },
             vertexShader: particleVertexShader,
             fragmentShader: particleFragmentShader,
             transparent: true,
@@ -498,7 +505,15 @@
                 strength: { value: 0.5 },
                 aspectRatio: { value: window.innerWidth / window.innerHeight },
                 uCameraPos: { value: camera.position.clone() },
-                uCoreBrightness: { value: 3.0 }
+                uCoreBrightness: { value: 3.0 },
+                uCenterPreserve: { value: 0.98 },
+                uViewDamp: { value: 0.85 },
+                uHorizonAbsorbStart: { value: 0.90 },
+                uHorizonAbsorbEnd: { value: 0.98 },
+                uHorizonAbsorbAmount: { value: 0.15 },
+                uRingStart: { value: 0.98 },
+                uRingEnd: { value: 1.05 },
+                uRingIntensity: { value: 1.5 }
             },
             vertexShader: `
                 varying vec2 vUv;
@@ -512,6 +527,14 @@
                 uniform float aspectRatio;
                 uniform vec3 uCameraPos;
                 uniform float uCoreBrightness;
+                uniform float uCenterPreserve;
+                uniform float uViewDamp;
+                uniform float uHorizonAbsorbStart;
+                uniform float uHorizonAbsorbEnd;
+                uniform float uHorizonAbsorbAmount;
+                uniform float uRingStart;
+                uniform float uRingEnd;
+                uniform float uRingIntensity;
                 varying vec2 vUv;
 
                 void main() {
@@ -523,13 +546,13 @@
                     vec4 baseColor = texture2D(tDiffuse, uv);
 
                     // Preserve underlying horizon from Gemini raymarch in the center.
-                    if (dist < radius * 0.98) {
+                    if (dist < radius * uCenterPreserve) {
                         gl_FragColor = baseColor;
                         return;
                     }
 
                     float viewAngle = abs(normalize(uCameraPos).y);
-                    float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
+                    float effectiveStrength = strength * (1.0 - viewAngle * uViewDamp);
                     float deflection = effectiveStrength * (radius * radius) / safeDist;
                     float sourceDist = dist - deflection;
 
@@ -543,11 +566,11 @@
                     vec4 texColor = mix(baseColor, warpedColor, inBounds);
 
                     // Gemini already raymarches the horizon shadow; avoid painting a second black disk here.
-                    float horizonAbsorb = 1.0 - smoothstep(radius * 0.90, radius * 0.98, dist);
-                    texColor.rgb *= (1.0 - 0.15 * horizonAbsorb);
+                    float horizonAbsorb = 1.0 - smoothstep(radius * uHorizonAbsorbStart, radius * uHorizonAbsorbEnd, dist);
+                    texColor.rgb *= (1.0 - uHorizonAbsorbAmount * horizonAbsorb);
 
-                    float photonRing = 1.0 - smoothstep(radius * 0.98, radius * 1.05, dist);
-                    vec4 ringColor = vec4(1.0, 0.9, 0.7, 1.0) * photonRing * (1.5 * uCoreBrightness);
+                    float photonRing = 1.0 - smoothstep(radius * uRingStart, radius * uRingEnd, dist);
+                    vec4 ringColor = vec4(1.0, 0.9, 0.7, 1.0) * photonRing * (uRingIntensity * uCoreBrightness);
 
                     gl_FragColor = texColor + ringColor;
                 }
@@ -610,6 +633,70 @@
         gui.add(params, 'autoOrbit').name('Auto Camera Orbit');
         gui.add(params, 'expand').name('Simulate Growth');
 
+        const debugParams = {
+            raymarchUseInverseMassCoupling: true,
+            raymarchCouplingScale: 2.5,
+            raymarchStrengthMultiplier: 1.0,
+            raymarchStrengthMax: 0.65,
+            raymarchGravityK: 1.5,
+            raymarchHorizonHit: 0.98,
+            wrapUseMassCoupling: true,
+            wrapCouplingScale: 2.5,
+            wrapStrengthMultiplier: 1.0,
+            wrapStrengthMax: 3.5,
+            lensRadiusScale: 1.0,
+            lensCenterPreserve: 0.98,
+            lensViewDamp: 0.85,
+            lensHorizonAbsorbStart: 0.90,
+            lensHorizonAbsorbEnd: 0.98,
+            lensHorizonAbsorbAmount: 0.15,
+            lensRingStart: 0.98,
+            lensRingEnd: 1.05,
+            lensRingIntensity: 1.5,
+            particleInnerCutoff: 0.08,
+            particleInnerFadeStart: 0.12,
+            particleInnerFadeEnd: 0.9,
+            showRaymarchBackground: true,
+            showBackLayer: true,
+            showLensingPass: true,
+            showFrontLayer: true,
+            showBloomPass: true,
+            resolvedRaymarchStrength: 0.0,
+            resolvedWrapStrength: 0.0
+        };
+
+        const debugFolder = gui.addFolder('Debug / Advanced');
+        debugFolder.add(debugParams, 'raymarchUseInverseMassCoupling').name('Raymarch Couple Inverse Mass');
+        debugFolder.add(debugParams, 'raymarchCouplingScale', 0.1, 12.0, 0.01).name('Raymarch Coupling Scale');
+        debugFolder.add(debugParams, 'raymarchStrengthMultiplier', 0.0, 6.0, 0.01).name('Raymarch Strength Mult');
+        debugFolder.add(debugParams, 'raymarchStrengthMax', 0.0, 6.0, 0.01).name('Raymarch Strength Max');
+        debugFolder.add(debugParams, 'raymarchGravityK', 0.1, 4.0, 0.01).name('Raymarch Gravity K');
+        debugFolder.add(debugParams, 'raymarchHorizonHit', 0.80, 1.20, 0.001).name('Raymarch Horizon Hit');
+        debugFolder.add(debugParams, 'wrapUseMassCoupling').name('Wrap Couple Mass');
+        debugFolder.add(debugParams, 'wrapCouplingScale', 0.1, 12.0, 0.01).name('Wrap Coupling Scale');
+        debugFolder.add(debugParams, 'wrapStrengthMultiplier', 0.0, 6.0, 0.01).name('Wrap Strength Mult');
+        debugFolder.add(debugParams, 'wrapStrengthMax', 0.0, 8.0, 0.01).name('Wrap Strength Max');
+        debugFolder.add(debugParams, 'lensRadiusScale', 0.2, 2.5, 0.01).name('Lens Radius Scale');
+        debugFolder.add(debugParams, 'lensCenterPreserve', 0.70, 1.20, 0.001).name('Lens Center Preserve');
+        debugFolder.add(debugParams, 'lensViewDamp', 0.0, 1.5, 0.01).name('Lens View Damp');
+        debugFolder.add(debugParams, 'lensHorizonAbsorbStart', 0.50, 1.50, 0.001).name('Lens Horizon Start');
+        debugFolder.add(debugParams, 'lensHorizonAbsorbEnd', 0.50, 1.80, 0.001).name('Lens Horizon End');
+        debugFolder.add(debugParams, 'lensHorizonAbsorbAmount', 0.0, 1.0, 0.01).name('Lens Horizon Darken');
+        debugFolder.add(debugParams, 'lensRingStart', 0.70, 1.30, 0.001).name('Lens Ring Start');
+        debugFolder.add(debugParams, 'lensRingEnd', 0.80, 1.60, 0.001).name('Lens Ring End');
+        debugFolder.add(debugParams, 'lensRingIntensity', 0.0, 5.0, 0.01).name('Lens Ring Intensity');
+        debugFolder.add(debugParams, 'particleInnerCutoff', -0.3, 1.5, 0.001).name('Particle Inner Cutoff');
+        debugFolder.add(debugParams, 'particleInnerFadeStart', -0.3, 2.0, 0.001).name('Particle Fade Start');
+        debugFolder.add(debugParams, 'particleInnerFadeEnd', 0.0, 3.0, 0.001).name('Particle Fade End');
+        debugFolder.add(debugParams, 'showRaymarchBackground').name('Show Raymarch Bg');
+        debugFolder.add(debugParams, 'showBackLayer').name('Show Back Layer');
+        debugFolder.add(debugParams, 'showLensingPass').name('Show Lensing Pass');
+        debugFolder.add(debugParams, 'showFrontLayer').name('Show Front Layer');
+        debugFolder.add(debugParams, 'showBloomPass').name('Show Bloom');
+        debugFolder.add(debugParams, 'resolvedRaymarchStrength').name('Resolved Raymarch').listen();
+        debugFolder.add(debugParams, 'resolvedWrapStrength').name('Resolved Wrap').listen();
+        debugFolder.close();
+
         let isExpanding = false;
         let expansionTime = 0;
         let currentScale = 1.0;
@@ -645,13 +732,19 @@
             raymarchMat.uniforms.uTime.value = time;
             raymarchMat.uniforms.uSpinSpeed.value = params.spinSpeed;
             raymarchMat.uniforms.uDiskBrightness.value = params.diskBrightness;
+            raymarchMat.uniforms.uGravityK.value = debugParams.raymarchGravityK;
+            raymarchMat.uniforms.uHorizonHit.value = debugParams.raymarchHorizonHit;
             // Keep raymarch shadow stable: high lens slider should increase wrap, not inflate a giant black orb.
+            const raymarchMassFactor = debugParams.raymarchUseInverseMassCoupling
+                ? (debugParams.raymarchCouplingScale / Math.max(params.radius, 0.5))
+                : 1.0;
             const raymarchStrength = THREE.MathUtils.clamp(
-                params.lensStrength * (2.5 / Math.max(params.radius, 0.5)),
+                params.lensStrength * debugParams.raymarchStrengthMultiplier * raymarchMassFactor,
                 0.0,
-                0.65
+                debugParams.raymarchStrengthMax
             );
             raymarchMat.uniforms.uLensStrength.value = raymarchStrength;
+            debugParams.resolvedRaymarchStrength = raymarchStrength;
             
             sharedUniforms.uCameraPos.value.copy(camera.position);
             sharedUniforms.uTime.value = time;
@@ -659,10 +752,32 @@
             sharedUniforms.uCoreBrightness.value = params.diskBrightness;
             pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
             pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
+            pMatBack.uniforms.uInnerCutoff.value = debugParams.particleInnerCutoff;
+            pMatFront.uniforms.uInnerCutoff.value = debugParams.particleInnerCutoff;
+            pMatBack.uniforms.uInnerFadeStart.value = debugParams.particleInnerFadeStart;
+            pMatFront.uniforms.uInnerFadeStart.value = debugParams.particleInnerFadeStart;
+            pMatBack.uniforms.uInnerFadeEnd.value = debugParams.particleInnerFadeEnd;
+            pMatFront.uniforms.uInnerFadeEnd.value = debugParams.particleInnerFadeEnd;
             lensingPass.uniforms.uCameraPos.value.copy(camera.position);
-            // Old-style wrap coupling: mass and lensing both influence the wrap amount.
-            const wrapStrength = THREE.MathUtils.clamp(params.lensStrength * (params.radius / 2.5), 0.0, 3.5);
+            lensingPass.uniforms.uCenterPreserve.value = debugParams.lensCenterPreserve;
+            lensingPass.uniforms.uViewDamp.value = debugParams.lensViewDamp;
+            lensingPass.uniforms.uHorizonAbsorbStart.value = debugParams.lensHorizonAbsorbStart;
+            lensingPass.uniforms.uHorizonAbsorbEnd.value = debugParams.lensHorizonAbsorbEnd;
+            lensingPass.uniforms.uHorizonAbsorbAmount.value = debugParams.lensHorizonAbsorbAmount;
+            lensingPass.uniforms.uRingStart.value = debugParams.lensRingStart;
+            lensingPass.uniforms.uRingEnd.value = debugParams.lensRingEnd;
+            lensingPass.uniforms.uRingIntensity.value = debugParams.lensRingIntensity;
+            // Old-style wrap coupling with full debug controls.
+            const wrapMassFactor = debugParams.wrapUseMassCoupling
+                ? (params.radius / Math.max(debugParams.wrapCouplingScale, 0.1))
+                : 1.0;
+            const wrapStrength = THREE.MathUtils.clamp(
+                params.lensStrength * debugParams.wrapStrengthMultiplier * wrapMassFactor,
+                0.0,
+                debugParams.wrapStrengthMax
+            );
             lensingPass.uniforms.strength.value = wrapStrength;
+            debugParams.resolvedWrapStrength = wrapStrength;
             lensingPass.uniforms.uCoreBrightness.value = params.diskBrightness;
 
             if (isExpanding) {
@@ -683,7 +798,12 @@
             const dist = camera.position.length();
             const vFOV = THREE.MathUtils.degToRad(camera.fov);
             const viewHeight = 2 * Math.tan(vFOV * 0.5) * dist;
-            lensingPass.uniforms.radius.value = params.radius / Math.max(viewHeight, 0.0001);
+            lensingPass.uniforms.radius.value = (params.radius / Math.max(viewHeight, 0.0001)) * debugParams.lensRadiusScale;
+            bgPass.enabled = debugParams.showRaymarchBackground;
+            backPass.enabled = debugParams.showBackLayer;
+            lensingPass.enabled = debugParams.showLensingPass;
+            frontPass.enabled = debugParams.showFrontLayer;
+            bloomPass.enabled = debugParams.showBloomPass;
 
             composer.render();
         }
