@@ -645,6 +645,21 @@
         gui.add(params, 'autoOrbit').name('Auto Camera Orbit');
         gui.add(params, 'expand').name('Simulate Growth');
 
+        const viewReadout = {
+            yawDeg: 0.0,
+            pitchDeg: 0.0,
+            lookX: 0.0,
+            lookY: 0.0,
+            lookZ: -1.0
+        };
+        const viewFolder = gui.addFolder('View Direction');
+        viewFolder.add(viewReadout, 'yawDeg').name('Yaw (deg)').listen();
+        viewFolder.add(viewReadout, 'pitchDeg').name('Pitch (deg)').listen();
+        viewFolder.add(viewReadout, 'lookX').name('Look X').listen();
+        viewFolder.add(viewReadout, 'lookY').name('Look Y').listen();
+        viewFolder.add(viewReadout, 'lookZ').name('Look Z').listen();
+        viewFolder.close();
+
         const debugParams = {
             raymarchUseInverseMassCoupling: true,
             raymarchCouplingScale: 2.5,
@@ -723,6 +738,7 @@
         const clock = new THREE.Clock();
         const cameraMat = new THREE.Matrix4();
         const bhWorldPos = new THREE.Vector3();
+        const lookDir = new THREE.Vector3();
 
         function animate() {
             requestAnimationFrame(animate);
@@ -736,6 +752,14 @@
                 camera.lookAt(0, 0, 0);
             }
             controls.update();
+            camera.getWorldDirection(lookDir);
+            const yaw = Math.atan2(lookDir.x, lookDir.z);
+            const pitch = Math.asin(THREE.MathUtils.clamp(lookDir.y, -1.0, 1.0));
+            viewReadout.yawDeg = Number((THREE.MathUtils.radToDeg(yaw)).toFixed(2));
+            viewReadout.pitchDeg = Number((THREE.MathUtils.radToDeg(pitch)).toFixed(2));
+            viewReadout.lookX = Number((lookDir.x).toFixed(3));
+            viewReadout.lookY = Number((lookDir.y).toFixed(3));
+            viewReadout.lookZ = Number((lookDir.z).toFixed(3));
 
             cameraMat.extractRotation(camera.matrixWorld);
             
