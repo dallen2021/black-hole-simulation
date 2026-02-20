@@ -104,6 +104,8 @@
             uniform float uEquatorStepScale;
             uniform float uNearHorizonFallback;
             uniform float uDebugTerminationMode;
+            uniform float uCoreShadowInner;
+            uniform float uCoreShadowOuter;
 
             varying vec2 vUv;
 
@@ -130,6 +132,7 @@
                 float fov = tan(45.0 * 0.5 * 3.14159 / 180.0);
                 vec3 rayDir = normalize(vec3(uv.x * fov, uv.y * fov, -1.0));
                 rayDir = (uCameraMatrix * vec4(rayDir, 0.0)).xyz;
+                float initialImpact = length(cross(uCameraPos, rayDir));
                 
                 vec3 rayPos = uCameraPos;
                 
@@ -241,7 +244,7 @@
                     return;
                 }
                 
-                if(!hitHorizon && color.a < 0.99) {
+                if(color.a < 0.99) {
                     vec3 absDir = abs(rayDir);
                     float maxAxis = max(max(absDir.x, absDir.y), absDir.z);
                     vec3 boxPos = rayDir / maxAxis * uEscapeRadius;
@@ -257,8 +260,14 @@
                     
                     float dist = length(boxPos);
                     roomCol += vec3(1.0, 0.5, 0.1) * (150.0 * rs / (dist * dist)) * (0.2 + 0.2 * uDiskBrightness); 
-                    
-                    color.rgb += (1.0 - color.a) * roomCol;
+
+                    if(hitHorizon) {
+                        // Keep a black core, but avoid the oversized full-capture black region.
+                        float coreMask = 1.0 - smoothstep(horizonRadius * uCoreShadowInner, horizonRadius * uCoreShadowOuter, initialImpact);
+                        color.rgb += (1.0 - color.a) * mix(roomCol, vec3(0.0), coreMask);
+                    } else {
+                        color.rgb += (1.0 - color.a) * roomCol;
+                    }
                 }
                 
                 gl_FragColor = vec4(color.rgb, 1.0);
@@ -286,7 +295,9 @@
                 uEquatorStepMin: { value: 0.015 },
                 uEquatorStepScale: { value: 0.3 },
                 uNearHorizonFallback: { value: 1.03 },
-                uDebugTerminationMode: { value: 0.0 }
+                uDebugTerminationMode: { value: 0.0 },
+                uCoreShadowInner: { value: 0.92 },
+                uCoreShadowOuter: { value: 1.08 }
             },
             vertexShader: raymarchVertexShader,
             fragmentShader: raymarchFragmentShader,
@@ -720,6 +731,8 @@
             raymarchEquatorStepScale: 0.3,
             raymarchNearHorizonFallback: 1.03,
             raymarchDebugTermination: false,
+            raymarchCoreShadowInner: 0.92,
+            raymarchCoreShadowOuter: 1.08,
             wrapUseMassCoupling: true,
             wrapCouplingScale: 2.5,
             wrapStrengthMultiplier: 1.0,
@@ -762,6 +775,8 @@
         debugFolder.add(debugParams, 'raymarchEquatorStepScale', 0.0, 2.0, 0.001).name('Raymarch Eq Step Scale');
         debugFolder.add(debugParams, 'raymarchNearHorizonFallback', 1.0, 2.0, 0.001).name('Raymarch Near-Horizon Fallback');
         debugFolder.add(debugParams, 'raymarchDebugTermination').name('Raymarch Debug Termination');
+        debugFolder.add(debugParams, 'raymarchCoreShadowInner', 0.1, 2.0, 0.001).name('Raymarch Core Shadow In');
+        debugFolder.add(debugParams, 'raymarchCoreShadowOuter', 0.1, 3.0, 0.001).name('Raymarch Core Shadow Out');
         debugFolder.add(debugParams, 'wrapUseMassCoupling').name('Wrap Couple Mass');
         debugFolder.add(debugParams, 'wrapCouplingScale', 0.0, 12.0, 0.01).name('Wrap Coupling Scale');
         debugFolder.add(debugParams, 'wrapStrengthMultiplier', 0.0, 6.0, 0.01).name('Wrap Strength Mult');
@@ -843,6 +858,8 @@
             raymarchMat.uniforms.uEquatorStepScale.value = debugParams.raymarchEquatorStepScale;
             raymarchMat.uniforms.uNearHorizonFallback.value = debugParams.raymarchNearHorizonFallback;
             raymarchMat.uniforms.uDebugTerminationMode.value = debugParams.raymarchDebugTermination ? 1.0 : 0.0;
+            raymarchMat.uniforms.uCoreShadowInner.value = debugParams.raymarchCoreShadowInner;
+            raymarchMat.uniforms.uCoreShadowOuter.value = debugParams.raymarchCoreShadowOuter;
             // Keep raymarch shadow stable: high lens slider should increase wrap, not inflate a giant black orb.
             const raymarchMassFactor = debugParams.raymarchUseInverseMassCoupling
                 ? (debugParams.raymarchCouplingScale / Math.max(params.radius, 0.5))
