@@ -68,12 +68,13 @@
 
         const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+        const DISK_LAYER_ALPHA_BASE = 1.0 / 8.0;
         const sharedUniforms = {
             uTime: { value: 0 },
             uSpinSpeed: { value: 0.05 },
             uCameraPos: { value: camera.position.clone() },
             uRadiusLimit: { value: 5.0 },
-            uLayerAlpha: { value: 1.0 / 8.0 },
+            uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE },
             uCoreBrightness: { value: 0.2 },
             uLensCenter: { value: new THREE.Vector2(0.5, 0.5) },
             uLensRadius: { value: 0.1 },
@@ -409,7 +410,7 @@
 
         const plasmaGeo = new THREE.PlaneGeometry(30, 30);
         const plasmaMatBack = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uIsFront: { value: 0.0 } },
+            uniforms: { ...sharedUniforms, uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE }, uIsFront: { value: 0.0 } },
             vertexShader: plasmaVertexShader,
             fragmentShader: plasmaFragmentShader,
             transparent: true,
@@ -418,7 +419,7 @@
             side: THREE.DoubleSide
         });
         const plasmaMatFront = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uIsFront: { value: 1.0 } },
+            uniforms: { ...sharedUniforms, uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE }, uIsFront: { value: 1.0 } },
             vertexShader: plasmaVertexShader,
             fragmentShader: plasmaFragmentShader,
             transparent: true,
@@ -814,6 +815,8 @@
             spinSpeed: 0.05,
             lensStrength: 0.5,
             diskBrightness: 0.2,
+            backDiskTuner: 1.0,
+            frontDiskTuner: 1.0,
             particleBrightness: 3.0,
             showParticles: true,
             radius: 5.0,
@@ -823,6 +826,8 @@
         gui.add(params, 'spinSpeed', 0.0, 2.0).name('Time Scale');
         gui.add(params, 'lensStrength', 0.0, 3.5).name('Lensing Strength');
         gui.add(params, 'diskBrightness', 0.0, 15.0).name('Core Brightness');
+        gui.add(params, 'backDiskTuner', 0.0, 3.0, 0.01).name('Back Disk Tuner');
+        gui.add(params, 'frontDiskTuner', 0.0, 3.0, 0.01).name('Front Disk Tuner');
         gui.add(params, 'particleBrightness', 0.0, 6.0).name('Gas Brightness');
         gui.add(params, 'showParticles').name('Show Particles').onChange((enabled) => {
             backParticles.visible = enabled;
@@ -1026,6 +1031,8 @@
             sharedUniforms.uTime.value = time;
             sharedUniforms.uSpinSpeed.value = params.spinSpeed;
             sharedUniforms.uCoreBrightness.value = params.diskBrightness;
+            plasmaMatBack.uniforms.uLayerAlpha.value = DISK_LAYER_ALPHA_BASE * params.backDiskTuner;
+            plasmaMatFront.uniforms.uLayerAlpha.value = DISK_LAYER_ALPHA_BASE * params.frontDiskTuner;
             particleGeo.setDrawRange(0, Math.floor(particleCount * THREE.MathUtils.clamp(particleParams.density, 0.0, 1.0)));
             pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
             pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
