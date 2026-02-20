@@ -519,11 +519,6 @@
                     float dist = length(delta);
                     float safeDist = max(dist, 0.0001);
 
-                    if (dist < radius * 0.98) {
-                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-                        return;
-                    }
-
                     float viewAngle = abs(normalize(uCameraPos).y);
                     float effectiveStrength = strength * (1.0 - viewAngle * 0.85);
                     float deflection = effectiveStrength * (radius * radius) / safeDist;
@@ -536,6 +531,10 @@
                     float inBounds = step(0.0, duv.x) * step(duv.x, 1.0) * step(0.0, duv.y) * step(duv.y, 1.0);
                     duv = clamp(duv, 0.0, 1.0);
                     vec4 texColor = texture2D(tDiffuse, duv) * inBounds;
+
+                    // Gemini already raymarches the horizon shadow; avoid painting a second black disk here.
+                    float horizonAbsorb = 1.0 - smoothstep(radius * 0.90, radius * 0.98, dist);
+                    texColor.rgb *= (1.0 - 0.15 * horizonAbsorb);
 
                     float photonRing = 1.0 - smoothstep(radius * 0.98, radius * 1.05, dist);
                     vec4 ringColor = vec4(1.0, 0.9, 0.7, 1.0) * photonRing * (1.5 * uCoreBrightness);
@@ -645,7 +644,9 @@
             pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
             pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
             lensingPass.uniforms.uCameraPos.value.copy(camera.position);
-            lensingPass.uniforms.strength.value = params.lensStrength;
+            // Old-style wrap coupling: mass and lensing both influence the wrap amount.
+            const wrapStrength = THREE.MathUtils.clamp(params.lensStrength * (params.radius / 2.5), 0.0, 3.5);
+            lensingPass.uniforms.strength.value = wrapStrength;
             lensingPass.uniforms.uCoreBrightness.value = params.diskBrightness;
 
             if (isExpanding) {
