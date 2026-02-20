@@ -348,6 +348,19 @@
                 float innerEdge = uRadiusLimit + 0.1;
                 if (r < innerEdge || r > 14.0) discard;
 
+                // True event-horizon occlusion: do not render disk fragments hidden behind the BH.
+                vec3 toPixel = vWorldPosition - uCameraPos;
+                float distToPixel = length(toPixel);
+                vec3 rayToPixel = toPixel / max(distToPixel, 0.0001);
+                float occRadius = uRadiusLimit * 1.02;
+                float occB = dot(uCameraPos, rayToPixel);
+                float occC = dot(uCameraPos, uCameraPos) - occRadius * occRadius;
+                float occH = occB * occB - occC;
+                if (occH > 0.0) {
+                    float tOcc = -occB - sqrt(occH);
+                    if (tOcc > 0.0 && tOcc < distToPixel) discard;
+                }
+
                 float effR = max(r, uRadiusLimit);
                 float temp = pow(uRadiusLimit / effR, 1.8);
                 vec3 color = mix(vec3(0.5, 0.05, 0.0), vec3(1.0, 0.3, 0.0), smoothstep(0.0, 0.3, temp));
@@ -511,6 +524,19 @@
                 // Match old behavior: render full particle set in both passes.
                 float passMask = 1.0;
                 if (vRadius < uRadiusLimit + uInnerCutoff) discard;
+
+                // True event-horizon occlusion for particles as well.
+                vec3 toParticle = vWorldPosition - uCameraPos;
+                float distToParticle = length(toParticle);
+                vec3 rayToParticle = toParticle / max(distToParticle, 0.0001);
+                float occRadius = uRadiusLimit * 1.02;
+                float occB = dot(uCameraPos, rayToParticle);
+                float occC = dot(uCameraPos, uCameraPos) - occRadius * occRadius;
+                float occH = occB * occB - occC;
+                if (occH > 0.0) {
+                    float tOcc = -occB - sqrt(occH);
+                    if (tOcc > 0.0 && tOcc < distToParticle) discard;
+                }
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
