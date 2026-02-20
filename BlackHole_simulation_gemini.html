@@ -191,26 +191,18 @@
                     if(distToEquator < 1.0 && r_xz < 30.0) {
                         dt = min(dt, max(0.015, distToEquator * 0.3));
                     }
-                    if (rayPos.y * (rayPos.y + rayDir.y * dt) < 0.0) {
-                        dt = min(dt, abs(rayPos.y / rayDir.y) + 0.001); 
-                    }
 
                     // Robust horizon hit: prevent stepping over the sphere at shallow grazing angles.
                     vec3 nextPos = rayPos + rayDir * dt;
                     vec3 seg = nextPos - rayPos;
                     float a = dot(seg, seg);
                     if (a > 1e-8) {
-                        float b = 2.0 * dot(rayPos, seg);
-                        float cSeg = dot(rayPos, rayPos) - horizonRadius * horizonRadius;
-                        float disc = b * b - 4.0 * a * cSeg;
-                        if (disc > 0.0) {
-                            float sDisc = sqrt(disc);
-                            float t0 = (-b - sDisc) / (2.0 * a);
-                            float t1 = (-b + sDisc) / (2.0 * a);
-                            if ((t0 >= 0.0 && t0 <= 1.0) || (t1 >= 0.0 && t1 <= 1.0)) {
-                                hitHorizon = true;
-                                break;
-                            }
+                        // Use closest approach on the segment to also catch tangent/near-tangent hits.
+                        float tClosest = clamp(-dot(rayPos, seg) / a, 0.0, 1.0);
+                        vec3 pClosest = rayPos + seg * tClosest;
+                        if (dot(pClosest, pClosest) <= horizonRadius * horizonRadius) {
+                            hitHorizon = true;
+                            break;
                         }
                     }
                     rayPos = nextPos;
