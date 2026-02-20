@@ -347,19 +347,6 @@
                 // if (passMask <= 0.01) discard;
                 float passMask = 1.0;
 
-                // Prevent particles from rendering through the black-hole center/shadow.
-                vec3 toParticle = vWorldPosition - uCameraPos;
-                float distToParticle = length(toParticle);
-                vec3 rayDir = toParticle / max(distToParticle, 0.0001);
-                float shadowRadius = uRadiusLimit * 2.5;
-                float b = dot(uCameraPos, rayDir);
-                float c = dot(uCameraPos, uCameraPos) - shadowRadius * shadowRadius;
-                float d = b * b - c;
-                if (d > 0.0) {
-                    float t = -b - sqrt(d);
-                    if (t > 0.0 && t < distToParticle) discard;
-                }
-
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
                 if (dist > 0.5) discard;
