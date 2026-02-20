@@ -322,6 +322,17 @@
             uniform float uRadiusLimit;
             uniform float uIsFront;
             uniform float uLayerAlpha;
+            uniform float uDiskInnerOffset;
+            uniform float uDiskOuterRadius;
+            uniform float uDiskTempPower;
+            uniform float uDiskBeaming;
+            uniform float uDiskNoiseScale;
+            uniform float uDiskNoiseStrength;
+            uniform float uDiskNoiseScroll;
+            uniform float uDiskOuterFadeStart;
+            uniform float uDiskOuterFadeEnd;
+            uniform float uDiskEdgeBoost;
+            uniform float uDiskRadialMin;
             uniform float uCoreBrightness;
             uniform vec2 uLensCenter;
             uniform float uLensRadius;
@@ -366,11 +377,11 @@
                 }
 
                 float r = length(vWorldPosition.xz);
-                float innerEdge = uRadiusLimit + 0.1;
-                if (r < innerEdge || r > 14.0) discard;
+                float innerEdge = uRadiusLimit + uDiskInnerOffset;
+                if (r < innerEdge || r > uDiskOuterRadius) discard;
 
                 float effR = max(r, uRadiusLimit);
-                float temp = pow(uRadiusLimit / effR, 1.8);
+                float temp = pow(uRadiusLimit / effR, uDiskTempPower);
                 vec3 color = mix(vec3(0.5, 0.05, 0.0), vec3(1.0, 0.3, 0.0), smoothstep(0.0, 0.3, temp));
                 color = mix(color, vec3(1.0, 0.8, 0.2), smoothstep(0.3, 0.7, temp));
                 color = mix(color, vec3(1.0, 1.0, 1.0), smoothstep(0.7, 1.0, temp));
@@ -379,38 +390,70 @@
                 vec3 velocityDir = normalize(vec3(-sin(angle), 0.0, cos(angle)));
                 vec3 viewDir = normalize(uCameraPos - vWorldPosition);
                 float doppler = dot(velocityDir, viewDir);
-                float beaming = 1.0 + doppler * 0.7;
+                float beaming = 1.0 + doppler * uDiskBeaming;
 
                 float omega = (2.0 * uSpinSpeed) * pow(uRadiusLimit / effR, 0.65);
                 float c = cos(uTime * omega);
                 float s = sin(uTime * omega);
                 mat2 rot = mat2(c, s, -s, c);
 
-                vec2 p = rot * (vWorldPosition.xz * 0.28);
+                vec2 p = rot * (vWorldPosition.xz * uDiskNoiseScale);
                 vec2 w = vec2(fbm(p + vec2(2.1, 5.7)), fbm(p + vec2(8.3, 1.3)));
-                p += (w - 0.5) * 2.2;
+                p += (w - 0.5) * uDiskNoiseStrength;
 
-                float gas = fbm(p * 1.7 + vec2(0.0, uTime * 0.12));
+                float gas = fbm(p * 1.7 + vec2(0.0, uTime * uDiskNoiseScroll));
                 float density = mix(0.1, 1.0, smoothstep(0.3, 0.8, gas));
 
                 float photonRing = 1.0 - smoothstep(uRadiusLimit, uRadiusLimit + 0.3, r);
                 float coreDrive = pow(max(uCoreBrightness, 0.0), 0.68);
-                float radialFalloff = mix(1.0, 0.35, smoothstep(uRadiusLimit + 0.2, 12.0, r));
+                float radialFalloff = mix(1.0, uDiskRadialMin, smoothstep(uRadiusLimit + 0.2, max(uDiskOuterRadius - 2.0, uRadiusLimit + 0.3), r));
                 vec3 finalColor = (color * beaming * 1.25) + (vec3(1.0, 0.9, 0.6) * photonRing * 2.1);
                 finalColor *= coreDrive * radialFalloff;
 
-                float outerFade = 1.0 - smoothstep(10.0, 14.0, r);
+                float outerFade = 1.0 - smoothstep(uDiskOuterFadeStart, uDiskOuterFadeEnd, r);
                 float viewAngle = abs(normalize(uCameraPos).y);
-                float edgeBoost = 1.0 + (1.0 - viewAngle) * 1.5;
+                float edgeBoost = 1.0 + (1.0 - viewAngle) * uDiskEdgeBoost;
 
                 float alpha = outerFade * density * 1.2 * uLayerAlpha * passMask * edgeBoost;
                 gl_FragColor = vec4(finalColor, alpha);
             }
         `;
 
+        const diskTunerDefaults = {
+            alpha: 1.0,
+            innerOffset: 0.1,
+            outerRadius: 14.0,
+            tempPower: 1.8,
+            beaming: 0.7,
+            noiseScale: 0.28,
+            noiseStrength: 2.2,
+            noiseScroll: 0.12,
+            outerFadeStart: 10.0,
+            outerFadeEnd: 14.0,
+            edgeBoost: 1.5,
+            radialMin: 0.35
+        };
+        const backDiskTuner = { ...diskTunerDefaults };
+        const frontDiskTuner = { ...diskTunerDefaults };
+
         const plasmaGeo = new THREE.PlaneGeometry(30, 30);
         const plasmaMatBack = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE }, uIsFront: { value: 0.0 } },
+            uniforms: {
+                ...sharedUniforms,
+                uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE * backDiskTuner.alpha },
+                uDiskInnerOffset: { value: backDiskTuner.innerOffset },
+                uDiskOuterRadius: { value: backDiskTuner.outerRadius },
+                uDiskTempPower: { value: backDiskTuner.tempPower },
+                uDiskBeaming: { value: backDiskTuner.beaming },
+                uDiskNoiseScale: { value: backDiskTuner.noiseScale },
+                uDiskNoiseStrength: { value: backDiskTuner.noiseStrength },
+                uDiskNoiseScroll: { value: backDiskTuner.noiseScroll },
+                uDiskOuterFadeStart: { value: backDiskTuner.outerFadeStart },
+                uDiskOuterFadeEnd: { value: backDiskTuner.outerFadeEnd },
+                uDiskEdgeBoost: { value: backDiskTuner.edgeBoost },
+                uDiskRadialMin: { value: backDiskTuner.radialMin },
+                uIsFront: { value: 0.0 }
+            },
             vertexShader: plasmaVertexShader,
             fragmentShader: plasmaFragmentShader,
             transparent: true,
@@ -419,7 +462,22 @@
             side: THREE.DoubleSide
         });
         const plasmaMatFront = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE }, uIsFront: { value: 1.0 } },
+            uniforms: {
+                ...sharedUniforms,
+                uLayerAlpha: { value: DISK_LAYER_ALPHA_BASE * frontDiskTuner.alpha },
+                uDiskInnerOffset: { value: frontDiskTuner.innerOffset },
+                uDiskOuterRadius: { value: frontDiskTuner.outerRadius },
+                uDiskTempPower: { value: frontDiskTuner.tempPower },
+                uDiskBeaming: { value: frontDiskTuner.beaming },
+                uDiskNoiseScale: { value: frontDiskTuner.noiseScale },
+                uDiskNoiseStrength: { value: frontDiskTuner.noiseStrength },
+                uDiskNoiseScroll: { value: frontDiskTuner.noiseScroll },
+                uDiskOuterFadeStart: { value: frontDiskTuner.outerFadeStart },
+                uDiskOuterFadeEnd: { value: frontDiskTuner.outerFadeEnd },
+                uDiskEdgeBoost: { value: frontDiskTuner.edgeBoost },
+                uDiskRadialMin: { value: frontDiskTuner.radialMin },
+                uIsFront: { value: 1.0 }
+            },
             vertexShader: plasmaVertexShader,
             fragmentShader: plasmaFragmentShader,
             transparent: true,
@@ -815,8 +873,6 @@
             spinSpeed: 0.05,
             lensStrength: 0.5,
             diskBrightness: 0.2,
-            backDiskTuner: 1.0,
-            frontDiskTuner: 1.0,
             particleBrightness: 3.0,
             showParticles: true,
             radius: 5.0,
@@ -826,8 +882,6 @@
         gui.add(params, 'spinSpeed', 0.0, 2.0).name('Time Scale');
         gui.add(params, 'lensStrength', 0.0, 3.5).name('Lensing Strength');
         gui.add(params, 'diskBrightness', 0.0, 15.0).name('Core Brightness');
-        gui.add(params, 'backDiskTuner', 0.0, 3.0, 0.01).name('Back Disk Tuner');
-        gui.add(params, 'frontDiskTuner', 0.0, 3.0, 0.01).name('Front Disk Tuner');
         gui.add(params, 'particleBrightness', 0.0, 6.0).name('Gas Brightness');
         gui.add(params, 'showParticles').name('Show Particles').onChange((enabled) => {
             backParticles.visible = enabled;
@@ -836,6 +890,36 @@
         gui.add(params, 'radius', 1.0, 8.0).name('Black Hole Mass').listen();
         gui.add(params, 'autoOrbit').name('Auto Camera Orbit');
         gui.add(params, 'expand').name('Simulate Growth');
+
+        const backDiskFolder = gui.addFolder('Back Disk Tuner');
+        backDiskFolder.add(backDiskTuner, 'alpha', 0.0, 3.0, 0.01).name('Alpha');
+        backDiskFolder.add(backDiskTuner, 'innerOffset', -1.0, 3.0, 0.01).name('Inner Offset');
+        backDiskFolder.add(backDiskTuner, 'outerRadius', 6.0, 30.0, 0.1).name('Outer Radius');
+        backDiskFolder.add(backDiskTuner, 'tempPower', 0.2, 4.0, 0.01).name('Temp Power');
+        backDiskFolder.add(backDiskTuner, 'beaming', 0.0, 2.0, 0.01).name('Beaming');
+        backDiskFolder.add(backDiskTuner, 'noiseScale', 0.05, 1.0, 0.001).name('Noise Scale');
+        backDiskFolder.add(backDiskTuner, 'noiseStrength', 0.0, 6.0, 0.01).name('Noise Strength');
+        backDiskFolder.add(backDiskTuner, 'noiseScroll', 0.0, 1.0, 0.001).name('Noise Scroll');
+        backDiskFolder.add(backDiskTuner, 'outerFadeStart', 0.0, 30.0, 0.1).name('Fade Start');
+        backDiskFolder.add(backDiskTuner, 'outerFadeEnd', 0.0, 30.0, 0.1).name('Fade End');
+        backDiskFolder.add(backDiskTuner, 'edgeBoost', 0.0, 4.0, 0.01).name('Edge Boost');
+        backDiskFolder.add(backDiskTuner, 'radialMin', 0.0, 1.0, 0.01).name('Radial Min');
+        backDiskFolder.close();
+
+        const frontDiskFolder = gui.addFolder('Front Disk Tuner');
+        frontDiskFolder.add(frontDiskTuner, 'alpha', 0.0, 3.0, 0.01).name('Alpha');
+        frontDiskFolder.add(frontDiskTuner, 'innerOffset', -1.0, 3.0, 0.01).name('Inner Offset');
+        frontDiskFolder.add(frontDiskTuner, 'outerRadius', 6.0, 30.0, 0.1).name('Outer Radius');
+        frontDiskFolder.add(frontDiskTuner, 'tempPower', 0.2, 4.0, 0.01).name('Temp Power');
+        frontDiskFolder.add(frontDiskTuner, 'beaming', 0.0, 2.0, 0.01).name('Beaming');
+        frontDiskFolder.add(frontDiskTuner, 'noiseScale', 0.05, 1.0, 0.001).name('Noise Scale');
+        frontDiskFolder.add(frontDiskTuner, 'noiseStrength', 0.0, 6.0, 0.01).name('Noise Strength');
+        frontDiskFolder.add(frontDiskTuner, 'noiseScroll', 0.0, 1.0, 0.001).name('Noise Scroll');
+        frontDiskFolder.add(frontDiskTuner, 'outerFadeStart', 0.0, 30.0, 0.1).name('Fade Start');
+        frontDiskFolder.add(frontDiskTuner, 'outerFadeEnd', 0.0, 30.0, 0.1).name('Fade End');
+        frontDiskFolder.add(frontDiskTuner, 'edgeBoost', 0.0, 4.0, 0.01).name('Edge Boost');
+        frontDiskFolder.add(frontDiskTuner, 'radialMin', 0.0, 1.0, 0.01).name('Radial Min');
+        frontDiskFolder.close();
 
         const gasFolder = gui.addFolder('Gas Particles');
         gasFolder.add(particleParams, 'density', 0.0, 1.0, 0.001).name('Density');
@@ -1031,8 +1115,31 @@
             sharedUniforms.uTime.value = time;
             sharedUniforms.uSpinSpeed.value = params.spinSpeed;
             sharedUniforms.uCoreBrightness.value = params.diskBrightness;
-            plasmaMatBack.uniforms.uLayerAlpha.value = DISK_LAYER_ALPHA_BASE * params.backDiskTuner;
-            plasmaMatFront.uniforms.uLayerAlpha.value = DISK_LAYER_ALPHA_BASE * params.frontDiskTuner;
+            plasmaMatBack.uniforms.uLayerAlpha.value = DISK_LAYER_ALPHA_BASE * backDiskTuner.alpha;
+            plasmaMatBack.uniforms.uDiskInnerOffset.value = backDiskTuner.innerOffset;
+            plasmaMatBack.uniforms.uDiskOuterRadius.value = backDiskTuner.outerRadius;
+            plasmaMatBack.uniforms.uDiskTempPower.value = backDiskTuner.tempPower;
+            plasmaMatBack.uniforms.uDiskBeaming.value = backDiskTuner.beaming;
+            plasmaMatBack.uniforms.uDiskNoiseScale.value = backDiskTuner.noiseScale;
+            plasmaMatBack.uniforms.uDiskNoiseStrength.value = backDiskTuner.noiseStrength;
+            plasmaMatBack.uniforms.uDiskNoiseScroll.value = backDiskTuner.noiseScroll;
+            plasmaMatBack.uniforms.uDiskOuterFadeStart.value = Math.min(backDiskTuner.outerFadeStart, backDiskTuner.outerFadeEnd);
+            plasmaMatBack.uniforms.uDiskOuterFadeEnd.value = Math.max(backDiskTuner.outerFadeStart, backDiskTuner.outerFadeEnd);
+            plasmaMatBack.uniforms.uDiskEdgeBoost.value = backDiskTuner.edgeBoost;
+            plasmaMatBack.uniforms.uDiskRadialMin.value = backDiskTuner.radialMin;
+
+            plasmaMatFront.uniforms.uLayerAlpha.value = DISK_LAYER_ALPHA_BASE * frontDiskTuner.alpha;
+            plasmaMatFront.uniforms.uDiskInnerOffset.value = frontDiskTuner.innerOffset;
+            plasmaMatFront.uniforms.uDiskOuterRadius.value = frontDiskTuner.outerRadius;
+            plasmaMatFront.uniforms.uDiskTempPower.value = frontDiskTuner.tempPower;
+            plasmaMatFront.uniforms.uDiskBeaming.value = frontDiskTuner.beaming;
+            plasmaMatFront.uniforms.uDiskNoiseScale.value = frontDiskTuner.noiseScale;
+            plasmaMatFront.uniforms.uDiskNoiseStrength.value = frontDiskTuner.noiseStrength;
+            plasmaMatFront.uniforms.uDiskNoiseScroll.value = frontDiskTuner.noiseScroll;
+            plasmaMatFront.uniforms.uDiskOuterFadeStart.value = Math.min(frontDiskTuner.outerFadeStart, frontDiskTuner.outerFadeEnd);
+            plasmaMatFront.uniforms.uDiskOuterFadeEnd.value = Math.max(frontDiskTuner.outerFadeStart, frontDiskTuner.outerFadeEnd);
+            plasmaMatFront.uniforms.uDiskEdgeBoost.value = frontDiskTuner.edgeBoost;
+            plasmaMatFront.uniforms.uDiskRadialMin.value = frontDiskTuner.radialMin;
             particleGeo.setDrawRange(0, Math.floor(particleCount * THREE.MathUtils.clamp(particleParams.density, 0.0, 1.0)));
             pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
             pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
