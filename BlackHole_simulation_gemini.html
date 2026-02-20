@@ -104,8 +104,6 @@
             uniform float uEquatorStepScale;
             uniform float uNearHorizonFallback;
             uniform float uDebugTerminationMode;
-            uniform float uCoreShadowInner;
-            uniform float uCoreShadowOuter;
 
             varying vec2 vUv;
 
@@ -132,7 +130,6 @@
                 float fov = tan(45.0 * 0.5 * 3.14159 / 180.0);
                 vec3 rayDir = normalize(vec3(uv.x * fov, uv.y * fov, -1.0));
                 rayDir = (uCameraMatrix * vec4(rayDir, 0.0)).xyz;
-                float initialImpact = length(cross(uCameraPos, rayDir));
                 
                 vec3 rayPos = uCameraPos;
                 
@@ -261,13 +258,7 @@
                     float dist = length(boxPos);
                     roomCol += vec3(1.0, 0.5, 0.1) * (150.0 * rs / (dist * dist)) * (0.2 + 0.2 * uDiskBrightness); 
 
-                    if(hitHorizon) {
-                        // Keep a black core, but avoid the oversized full-capture black region.
-                        float coreMask = 1.0 - smoothstep(horizonRadius * uCoreShadowInner, horizonRadius * uCoreShadowOuter, initialImpact);
-                        color.rgb += (1.0 - color.a) * mix(roomCol, vec3(0.0), coreMask);
-                    } else {
-                        color.rgb += (1.0 - color.a) * roomCol;
-                    }
+                    color.rgb += (1.0 - color.a) * roomCol;
                 }
                 
                 gl_FragColor = vec4(color.rgb, 1.0);
@@ -295,9 +286,7 @@
                 uEquatorStepMin: { value: 0.015 },
                 uEquatorStepScale: { value: 0.3 },
                 uNearHorizonFallback: { value: 1.03 },
-                uDebugTerminationMode: { value: 0.0 },
-                uCoreShadowInner: { value: 0.92 },
-                uCoreShadowOuter: { value: 1.08 }
+                uDebugTerminationMode: { value: 0.0 }
             },
             vertexShader: raymarchVertexShader,
             fragmentShader: raymarchFragmentShader,
@@ -576,7 +565,7 @@
                 uViewDamp: { value: 0.85 },
                 uHorizonAbsorbStart: { value: 0.90 },
                 uHorizonAbsorbEnd: { value: 0.98 },
-                uHorizonAbsorbAmount: { value: 0.15 },
+                uHorizonAbsorbAmount: { value: 0.0 },
                 uRingStart: { value: 0.98 },
                 uRingEnd: { value: 1.05 },
                 uRingIntensity: { value: 1.5 }
@@ -611,9 +600,9 @@
                     float safeDist = max(dist, 0.0001);
                     vec4 baseColor = texture2D(tDiffuse, uv);
 
-                    // Preserve underlying horizon from Gemini raymarch in the center.
+                    // Black-hole core is authored only here (not from raymarch background).
                     if (dist < radius * uCenterPreserve) {
-                        gl_FragColor = baseColor;
+                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                         return;
                     }
 
@@ -731,8 +720,6 @@
             raymarchEquatorStepScale: 0.3,
             raymarchNearHorizonFallback: 1.03,
             raymarchDebugTermination: false,
-            raymarchCoreShadowInner: 0.92,
-            raymarchCoreShadowOuter: 1.08,
             wrapUseMassCoupling: true,
             wrapCouplingScale: 2.5,
             wrapStrengthMultiplier: 1.0,
@@ -742,7 +729,7 @@
             lensViewDamp: 0.85,
             lensHorizonAbsorbStart: 0.90,
             lensHorizonAbsorbEnd: 0.98,
-            lensHorizonAbsorbAmount: 0.15,
+            lensHorizonAbsorbAmount: 0.0,
             lensRingStart: 0.98,
             lensRingEnd: 1.05,
             lensRingIntensity: 1.5,
@@ -775,8 +762,6 @@
         debugFolder.add(debugParams, 'raymarchEquatorStepScale', 0.0, 2.0, 0.001).name('Raymarch Eq Step Scale');
         debugFolder.add(debugParams, 'raymarchNearHorizonFallback', 1.0, 2.0, 0.001).name('Raymarch Near-Horizon Fallback');
         debugFolder.add(debugParams, 'raymarchDebugTermination').name('Raymarch Debug Termination');
-        debugFolder.add(debugParams, 'raymarchCoreShadowInner', 0.1, 2.0, 0.001).name('Raymarch Core Shadow In');
-        debugFolder.add(debugParams, 'raymarchCoreShadowOuter', 0.1, 3.0, 0.001).name('Raymarch Core Shadow Out');
         debugFolder.add(debugParams, 'wrapUseMassCoupling').name('Wrap Couple Mass');
         debugFolder.add(debugParams, 'wrapCouplingScale', 0.0, 12.0, 0.01).name('Wrap Coupling Scale');
         debugFolder.add(debugParams, 'wrapStrengthMultiplier', 0.0, 6.0, 0.01).name('Wrap Strength Mult');
@@ -858,8 +843,6 @@
             raymarchMat.uniforms.uEquatorStepScale.value = debugParams.raymarchEquatorStepScale;
             raymarchMat.uniforms.uNearHorizonFallback.value = debugParams.raymarchNearHorizonFallback;
             raymarchMat.uniforms.uDebugTerminationMode.value = debugParams.raymarchDebugTermination ? 1.0 : 0.0;
-            raymarchMat.uniforms.uCoreShadowInner.value = debugParams.raymarchCoreShadowInner;
-            raymarchMat.uniforms.uCoreShadowOuter.value = debugParams.raymarchCoreShadowOuter;
             // Keep raymarch shadow stable: high lens slider should increase wrap, not inflate a giant black orb.
             const raymarchMassFactor = debugParams.raymarchUseInverseMassCoupling
                 ? (debugParams.raymarchCouplingScale / Math.max(params.radius, 0.5))
