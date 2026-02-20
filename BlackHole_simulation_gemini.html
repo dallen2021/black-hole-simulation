@@ -94,6 +94,16 @@
             uniform float uLensStrength;
             uniform float uGravityK;
             uniform float uHorizonHit;
+            uniform float uEscapeRadius;
+            uniform int uMaxSteps;
+            uniform float uStepScale;
+            uniform float uEquatorClampEnabled;
+            uniform float uEquatorBand;
+            uniform float uEquatorRadius;
+            uniform float uEquatorStepMin;
+            uniform float uEquatorStepScale;
+            uniform float uNearHorizonFallback;
+            uniform float uDebugTerminationMode;
 
             varying vec2 vUv;
 
@@ -131,13 +141,16 @@
                 vec4 color = vec4(0.0);
                 float dt = 0.05;
                 bool hitHorizon = false;
+                int termReason = 0; // 1 = horizon hit, 2 = escaped, 3 = max-step/unfinished
                 
-                for(int i = 0; i < 200; i++) {
+                const int MAX_RAYMARCH_STEPS = 1200;
+                for(int i = 0; i < MAX_RAYMARCH_STEPS; i++) {
+                    if(i >= uMaxSteps) { termReason = 3; break; }
                     float r2 = dot(rayPos, rayPos);
                     float r = sqrt(r2);
                     
-                    if(r < horizonRadius) { hitHorizon = true; break; }
-                    if(r > 150.0) { break; }
+                    if(r < horizonRadius) { hitHorizon = true; termReason = 1; break; }
+                    if(r > uEscapeRadius) { termReason = 2; break; }
                     
                     vec3 accel = -uGravityK * uLensStrength * h2 * rs * rayPos / (r2 * r2 * r);
                     rayDir = normalize(rayDir + accel * dt);
@@ -186,10 +199,10 @@
                         }
                     }
                     
-                    dt = 0.04 * r;
+                    dt = uStepScale * r;
                     float distToEquator = abs(rayPos.y);
-                    if(distToEquator < 1.0 && r_xz < 30.0) {
-                        dt = min(dt, max(0.015, distToEquator * 0.3));
+                    if(uEquatorClampEnabled > 0.5 && distToEquator < uEquatorBand && r_xz < uEquatorRadius) {
+                        dt = min(dt, max(uEquatorStepMin, distToEquator * uEquatorStepScale));
                     }
 
                     // Robust horizon hit: prevent stepping over the sphere at shallow grazing angles.
@@ -202,16 +215,36 @@
                         vec3 pClosest = rayPos + seg * tClosest;
                         if (dot(pClosest, pClosest) <= horizonRadius * horizonRadius) {
                             hitHorizon = true;
+                            termReason = 1;
                             break;
                         }
                     }
                     rayPos = nextPos;
                 }
+
+                // If the loop maxes out but the ray endpoint is still near the horizon, classify as a hit.
+                if(termReason == 0) termReason = 3;
+                if(termReason == 3) {
+                    float rEnd = length(rayPos);
+                    if(rEnd <= horizonRadius * uNearHorizonFallback) {
+                        hitHorizon = true;
+                        termReason = 1;
+                    }
+                }
+
+                if(uDebugTerminationMode > 0.5) {
+                    vec3 dbg = vec3(1.0, 0.0, 1.0);
+                    if(termReason == 1) dbg = vec3(0.0, 0.0, 0.0);      // horizon hit
+                    if(termReason == 2) dbg = vec3(0.0, 0.7, 1.0);      // escaped to room
+                    if(termReason == 3) dbg = vec3(1.0, 0.0, 0.0);      // max-step/unfinished
+                    gl_FragColor = vec4(dbg, 1.0);
+                    return;
+                }
                 
                 if(!hitHorizon && color.a < 0.99) {
                     vec3 absDir = abs(rayDir);
                     float maxAxis = max(max(absDir.x, absDir.y), absDir.z);
-                    vec3 boxPos = rayDir / maxAxis * 100.0;
+                    vec3 boxPos = rayDir / maxAxis * uEscapeRadius;
                     
                     vec2 uvBox;
                     if(maxAxis == absDir.y) uvBox = boxPos.xz;
@@ -243,7 +276,17 @@
                 uDiskBrightness: { value: 3.0 },
                 uLensStrength: { value: 0.5 },
                 uGravityK: { value: 1.5 },
-                uHorizonHit: { value: 0.98 }
+                uHorizonHit: { value: 0.98 },
+                uEscapeRadius: { value: 150.0 },
+                uMaxSteps: { value: 600 },
+                uStepScale: { value: 0.04 },
+                uEquatorClampEnabled: { value: 1.0 },
+                uEquatorBand: { value: 1.0 },
+                uEquatorRadius: { value: 30.0 },
+                uEquatorStepMin: { value: 0.015 },
+                uEquatorStepScale: { value: 0.3 },
+                uNearHorizonFallback: { value: 1.03 },
+                uDebugTerminationMode: { value: 0.0 }
             },
             vertexShader: raymarchVertexShader,
             fragmentShader: raymarchFragmentShader,
@@ -667,6 +710,16 @@
             raymarchStrengthMax: 0.65,
             raymarchGravityK: 1.5,
             raymarchHorizonHit: 0.98,
+            raymarchEscapeRadius: 150.0,
+            raymarchMaxSteps: 600,
+            raymarchStepScale: 0.04,
+            raymarchUseEquatorClamp: true,
+            raymarchEquatorBand: 1.0,
+            raymarchEquatorRadius: 30.0,
+            raymarchEquatorStepMin: 0.015,
+            raymarchEquatorStepScale: 0.3,
+            raymarchNearHorizonFallback: 1.03,
+            raymarchDebugTermination: false,
             wrapUseMassCoupling: true,
             wrapCouplingScale: 2.5,
             wrapStrengthMultiplier: 1.0,
@@ -699,6 +752,16 @@
         debugFolder.add(debugParams, 'raymarchStrengthMax', 0.0, 6.0, 0.01).name('Raymarch Strength Max');
         debugFolder.add(debugParams, 'raymarchGravityK', 0.0, 4.0, 0.01).name('Raymarch Gravity K');
         debugFolder.add(debugParams, 'raymarchHorizonHit', 0.0, 1.20, 0.001).name('Raymarch Horizon Hit');
+        debugFolder.add(debugParams, 'raymarchEscapeRadius', 20.0, 400.0, 1.0).name('Raymarch Escape Radius');
+        debugFolder.add(debugParams, 'raymarchMaxSteps', 16.0, 1200.0, 1.0).name('Raymarch Max Steps');
+        debugFolder.add(debugParams, 'raymarchStepScale', 0.001, 0.2, 0.001).name('Raymarch Step Scale');
+        debugFolder.add(debugParams, 'raymarchUseEquatorClamp').name('Raymarch Equator Clamp');
+        debugFolder.add(debugParams, 'raymarchEquatorBand', 0.0, 8.0, 0.01).name('Raymarch Eq Band');
+        debugFolder.add(debugParams, 'raymarchEquatorRadius', 0.0, 120.0, 0.1).name('Raymarch Eq Radius');
+        debugFolder.add(debugParams, 'raymarchEquatorStepMin', 0.0, 0.2, 0.001).name('Raymarch Eq Step Min');
+        debugFolder.add(debugParams, 'raymarchEquatorStepScale', 0.0, 2.0, 0.001).name('Raymarch Eq Step Scale');
+        debugFolder.add(debugParams, 'raymarchNearHorizonFallback', 1.0, 2.0, 0.001).name('Raymarch Near-Horizon Fallback');
+        debugFolder.add(debugParams, 'raymarchDebugTermination').name('Raymarch Debug Termination');
         debugFolder.add(debugParams, 'wrapUseMassCoupling').name('Wrap Couple Mass');
         debugFolder.add(debugParams, 'wrapCouplingScale', 0.0, 12.0, 0.01).name('Wrap Coupling Scale');
         debugFolder.add(debugParams, 'wrapStrengthMultiplier', 0.0, 6.0, 0.01).name('Wrap Strength Mult');
@@ -770,6 +833,16 @@
             raymarchMat.uniforms.uDiskBrightness.value = params.diskBrightness;
             raymarchMat.uniforms.uGravityK.value = debugParams.raymarchGravityK;
             raymarchMat.uniforms.uHorizonHit.value = debugParams.raymarchHorizonHit;
+            raymarchMat.uniforms.uEscapeRadius.value = debugParams.raymarchEscapeRadius;
+            raymarchMat.uniforms.uMaxSteps.value = Math.floor(debugParams.raymarchMaxSteps);
+            raymarchMat.uniforms.uStepScale.value = debugParams.raymarchStepScale;
+            raymarchMat.uniforms.uEquatorClampEnabled.value = debugParams.raymarchUseEquatorClamp ? 1.0 : 0.0;
+            raymarchMat.uniforms.uEquatorBand.value = debugParams.raymarchEquatorBand;
+            raymarchMat.uniforms.uEquatorRadius.value = debugParams.raymarchEquatorRadius;
+            raymarchMat.uniforms.uEquatorStepMin.value = debugParams.raymarchEquatorStepMin;
+            raymarchMat.uniforms.uEquatorStepScale.value = debugParams.raymarchEquatorStepScale;
+            raymarchMat.uniforms.uNearHorizonFallback.value = debugParams.raymarchNearHorizonFallback;
+            raymarchMat.uniforms.uDebugTerminationMode.value = debugParams.raymarchDebugTermination ? 1.0 : 0.0;
             // Keep raymarch shadow stable: high lens slider should increase wrap, not inflate a giant black orb.
             const raymarchMassFactor = debugParams.raymarchUseInverseMassCoupling
                 ? (debugParams.raymarchCouplingScale / Math.max(params.radius, 0.5))
