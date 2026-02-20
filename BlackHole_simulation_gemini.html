@@ -478,6 +478,14 @@
             uniform float uSpinSpeed;
             uniform vec3 uCameraPos;
             uniform float uRadiusLimit;
+            uniform float uParticleOrbitMul;
+            uniform float uParticleVerticalScale;
+            uniform float uParticleJitterAmp;
+            uniform float uParticleJitterFreq;
+            uniform float uParticleSizeMul;
+            uniform float uParticleConeStart;
+            uniform float uParticleConeEnd;
+            uniform float uParticleConeMin;
 
             attribute float aAngle;
             attribute float aRadius;
@@ -491,14 +499,16 @@
             void main() {
                 vRadius = aRadius;
                 float effR = max(aRadius, uRadiusLimit);
-                float speed = 18.0 / sqrt(effR);
+                float speed = (18.0 / sqrt(effR)) * uParticleOrbitMul;
                 float currentAngle = aAngle + (uTime * speed * uSpinSpeed);
+                float edgeCone = 1.0 - smoothstep(uParticleConeStart, uParticleConeEnd, aRadius);
+                float coneScale = mix(uParticleConeMin, 1.0, edgeCone);
 
                 vec3 newPos = position;
                 newPos.x = aRadius * cos(currentAngle);
                 newPos.z = aRadius * sin(currentAngle);
-                float edgeCone = 1.0 - smoothstep(16.0, 24.0, aRadius);
-                newPos.y += sin(uTime * 1.5 + aAngle * 10.0) * 0.15 * (0.35 + 0.65 * edgeCone);
+                newPos.y = position.y * uParticleVerticalScale * coneScale;
+                newPos.y += sin(uTime * uParticleJitterFreq + aAngle * 10.0) * uParticleJitterAmp * coneScale;
 
                 vec4 worldPosition = modelMatrix * vec4(newPos, 1.0);
                 vWorldPosition = worldPosition.xyz;
@@ -512,7 +522,7 @@
                 vDoppler = dot(velocityDir, viewDir);
 
                 vec4 mvPosition = viewMatrix * worldPosition;
-                gl_PointSize = (aSize * 90.0) / -mvPosition.z;
+                gl_PointSize = (aSize * 90.0 * uParticleSizeMul) / -mvPosition.z;
                 gl_Position = projectionMatrix * mvPosition;
             }
         `;
@@ -526,6 +536,20 @@
             uniform float uInnerCutoff;
             uniform float uInnerFadeStart;
             uniform float uInnerFadeEnd;
+            uniform float uParticleAlpha;
+            uniform float uParticleSoftness;
+            uniform float uParticleEdgeStart;
+            uniform float uParticleEdgeEnd;
+            uniform float uParticleEdgePow;
+            uniform float uParticleBeaming;
+            uniform float uParticleTempPow;
+            uniform float uParticleCoreGamma;
+            uniform float uParticleConeStart;
+            uniform float uParticleConeEnd;
+            uniform float uParticleConeMin;
+            uniform vec3 uParticleColorLow;
+            uniform vec3 uParticleColorMid;
+            uniform vec3 uParticleColorHigh;
             uniform vec2 uLensCenter;
             uniform float uLensRadius;
             uniform float uAspectRatio;
@@ -552,25 +576,51 @@
                 vec2 coord = gl_PointCoord - vec2(0.5);
                 float dist = length(coord);
                 if (dist > 0.5) discard;
-                float alpha = exp(-dist * dist * 12.0) * 0.18;
+                float alpha = exp(-dist * dist * uParticleSoftness) * uParticleAlpha;
 
                 float effR = max(vRadius, uRadiusLimit);
-                float temp = pow(uRadiusLimit / effR, 1.8);
-                vec3 color = mix(vec3(0.6, 0.1, 0.0), vec3(1.0, 0.5, 0.1), smoothstep(0.0, 0.4, temp));
-                color = mix(color, vec3(1.0, 0.9, 0.8), smoothstep(0.4, 1.0, temp));
+                float temp = pow(uRadiusLimit / effR, uParticleTempPow);
+                vec3 color = mix(uParticleColorLow, uParticleColorMid, smoothstep(0.0, 0.4, temp));
+                color = mix(color, uParticleColorHigh, smoothstep(0.4, 1.0, temp));
 
-                float beaming = 1.0 + vDoppler * 0.7;
-                float edgeFade = pow(1.0 - smoothstep(14.5, 24.0, vRadius), 1.8);
+                float beaming = 1.0 + vDoppler * uParticleBeaming;
+                float edgeFade = pow(1.0 - smoothstep(uParticleEdgeStart, uParticleEdgeEnd, vRadius), uParticleEdgePow);
                 float innerFade = smoothstep(uRadiusLimit + uInnerFadeStart, uRadiusLimit + uInnerFadeEnd, vRadius);
-                float coneTaper = 1.0 - smoothstep(17.0, 24.0, vRadius);
-                float coreDrive = pow(max(uCoreBrightness, 0.0), 0.62);
-                float taperBoost = mix(0.55, 1.0, coneTaper);
+                float coneTaper = 1.0 - smoothstep(uParticleConeStart, uParticleConeEnd, vRadius);
+                float coreDrive = pow(max(uCoreBrightness, 0.0), uParticleCoreGamma);
+                float taperBoost = mix(uParticleConeMin, 1.0, coneTaper);
                 gl_FragColor = vec4(color * beaming * uParticleBrightness * coreDrive * taperBoost, alpha * edgeFade * passMask * innerFade * taperBoost);
             }
         `;
 
         const pMatBack = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uInnerCutoff: { value: 0.08 }, uInnerFadeStart: { value: 0.12 }, uInnerFadeEnd: { value: 0.9 }, uIsFront: { value: 0.0 } },
+            uniforms: {
+                ...sharedUniforms,
+                uParticleBrightness: { value: 3.0 },
+                uInnerCutoff: { value: 0.08 },
+                uInnerFadeStart: { value: 0.12 },
+                uInnerFadeEnd: { value: 0.9 },
+                uParticleAlpha: { value: 0.18 },
+                uParticleSoftness: { value: 12.0 },
+                uParticleEdgeStart: { value: 14.5 },
+                uParticleEdgeEnd: { value: 24.0 },
+                uParticleEdgePow: { value: 1.8 },
+                uParticleBeaming: { value: 0.7 },
+                uParticleTempPow: { value: 1.8 },
+                uParticleCoreGamma: { value: 0.62 },
+                uParticleOrbitMul: { value: 1.0 },
+                uParticleVerticalScale: { value: 1.0 },
+                uParticleJitterAmp: { value: 0.15 },
+                uParticleJitterFreq: { value: 1.5 },
+                uParticleSizeMul: { value: 1.0 },
+                uParticleConeStart: { value: 17.0 },
+                uParticleConeEnd: { value: 24.0 },
+                uParticleConeMin: { value: 0.55 },
+                uParticleColorLow: { value: new THREE.Color(0.6, 0.1, 0.0) },
+                uParticleColorMid: { value: new THREE.Color(1.0, 0.5, 0.1) },
+                uParticleColorHigh: { value: new THREE.Color(1.0, 0.9, 0.8) },
+                uIsFront: { value: 0.0 }
+            },
             vertexShader: particleVertexShader,
             fragmentShader: particleFragmentShader,
             transparent: true,
@@ -578,7 +628,33 @@
             blending: THREE.AdditiveBlending
         });
         const pMatFront = new THREE.ShaderMaterial({
-            uniforms: { ...sharedUniforms, uParticleBrightness: { value: 3.0 }, uInnerCutoff: { value: 0.08 }, uInnerFadeStart: { value: 0.12 }, uInnerFadeEnd: { value: 0.9 }, uIsFront: { value: 1.0 } },
+            uniforms: {
+                ...sharedUniforms,
+                uParticleBrightness: { value: 3.0 },
+                uInnerCutoff: { value: 0.08 },
+                uInnerFadeStart: { value: 0.12 },
+                uInnerFadeEnd: { value: 0.9 },
+                uParticleAlpha: { value: 0.18 },
+                uParticleSoftness: { value: 12.0 },
+                uParticleEdgeStart: { value: 14.5 },
+                uParticleEdgeEnd: { value: 24.0 },
+                uParticleEdgePow: { value: 1.8 },
+                uParticleBeaming: { value: 0.7 },
+                uParticleTempPow: { value: 1.8 },
+                uParticleCoreGamma: { value: 0.62 },
+                uParticleOrbitMul: { value: 1.0 },
+                uParticleVerticalScale: { value: 1.0 },
+                uParticleJitterAmp: { value: 0.15 },
+                uParticleJitterFreq: { value: 1.5 },
+                uParticleSizeMul: { value: 1.0 },
+                uParticleConeStart: { value: 17.0 },
+                uParticleConeEnd: { value: 24.0 },
+                uParticleConeMin: { value: 0.55 },
+                uParticleColorLow: { value: new THREE.Color(0.6, 0.1, 0.0) },
+                uParticleColorMid: { value: new THREE.Color(1.0, 0.5, 0.1) },
+                uParticleColorHigh: { value: new THREE.Color(1.0, 0.9, 0.8) },
+                uIsFront: { value: 1.0 }
+            },
             vertexShader: particleVertexShader,
             fragmentShader: particleFragmentShader,
             transparent: true,
@@ -591,6 +667,32 @@
         const frontParticles = new THREE.Points(particleGeo, pMatFront);
         sceneBack.add(backParticles);
         sceneFront.add(frontParticles);
+
+        const particleParams = {
+            density: 1.0,
+            sizeMul: 1.0,
+            alpha: 0.18,
+            softness: 12.0,
+            orbitMul: 1.0,
+            verticalScale: 1.0,
+            jitterAmp: 0.15,
+            jitterFreq: 1.5,
+            coneStart: 17.0,
+            coneEnd: 24.0,
+            coneMin: 0.55,
+            edgeStart: 14.5,
+            edgeEnd: 24.0,
+            edgePow: 1.8,
+            beaming: 0.7,
+            tempPow: 1.8,
+            coreGamma: 0.62,
+            innerCutoff: 0.08,
+            innerFadeStart: 0.12,
+            innerFadeEnd: 0.9,
+            colorLow: '#993300',
+            colorMid: '#ff7f1a',
+            colorHigh: '#ffe6cc'
+        };
 
         // --- 5. POST LENSING PASS (back layer only) ---
         const LensingShader = {
@@ -730,6 +832,32 @@
         gui.add(params, 'autoOrbit').name('Auto Camera Orbit');
         gui.add(params, 'expand').name('Simulate Growth');
 
+        const gasFolder = gui.addFolder('Gas Particles');
+        gasFolder.add(particleParams, 'density', 0.0, 1.0, 0.001).name('Density');
+        gasFolder.add(particleParams, 'sizeMul', 0.1, 4.0, 0.01).name('Size');
+        gasFolder.add(particleParams, 'alpha', 0.0, 1.0, 0.001).name('Alpha');
+        gasFolder.add(particleParams, 'softness', 2.0, 30.0, 0.1).name('Softness');
+        gasFolder.add(particleParams, 'orbitMul', 0.0, 3.0, 0.01).name('Orbit Speed');
+        gasFolder.add(particleParams, 'verticalScale', 0.0, 3.0, 0.01).name('Thickness');
+        gasFolder.add(particleParams, 'jitterAmp', 0.0, 1.0, 0.001).name('Turbulence Amp');
+        gasFolder.add(particleParams, 'jitterFreq', 0.0, 8.0, 0.01).name('Turbulence Freq');
+        gasFolder.add(particleParams, 'coneStart', 5.0, 24.0, 0.1).name('Cone Start');
+        gasFolder.add(particleParams, 'coneEnd', 8.0, 32.0, 0.1).name('Cone End');
+        gasFolder.add(particleParams, 'coneMin', 0.0, 1.0, 0.001).name('Cone Min');
+        gasFolder.add(particleParams, 'edgeStart', 8.0, 24.0, 0.1).name('Edge Start');
+        gasFolder.add(particleParams, 'edgeEnd', 10.0, 32.0, 0.1).name('Edge End');
+        gasFolder.add(particleParams, 'edgePow', 0.2, 4.0, 0.01).name('Edge Power');
+        gasFolder.add(particleParams, 'beaming', 0.0, 2.0, 0.01).name('Beaming');
+        gasFolder.add(particleParams, 'tempPow', 0.2, 3.0, 0.01).name('Temp Power');
+        gasFolder.add(particleParams, 'coreGamma', 0.2, 1.2, 0.01).name('Core Response');
+        gasFolder.add(particleParams, 'innerCutoff', -0.3, 1.5, 0.001).name('Inner Cutoff');
+        gasFolder.add(particleParams, 'innerFadeStart', -0.3, 2.0, 0.001).name('Inner Fade Start');
+        gasFolder.add(particleParams, 'innerFadeEnd', 0.0, 3.0, 0.001).name('Inner Fade End');
+        gasFolder.addColor(particleParams, 'colorLow').name('Color Low');
+        gasFolder.addColor(particleParams, 'colorMid').name('Color Mid');
+        gasFolder.addColor(particleParams, 'colorHigh').name('Color High');
+        gasFolder.close();
+
         const viewReadout = {
             yawDeg: 0.0,
             pitchDeg: 0.0,
@@ -776,9 +904,6 @@
             lensRingEnd: 1.05,
             lensRingIntensity: 1.5,
             frontCoreMaskScale: 0.98,
-            particleInnerCutoff: 0.08,
-            particleInnerFadeStart: 0.12,
-            particleInnerFadeEnd: 0.9,
             showRaymarchBackground: true,
             showBackLayer: true,
             showLensingPass: true,
@@ -819,9 +944,6 @@
         debugFolder.add(debugParams, 'lensRingEnd', 0.0, 1.60, 0.001).name('Lens Ring End');
         debugFolder.add(debugParams, 'lensRingIntensity', 0.0, 5.0, 0.01).name('Lens Ring Intensity');
         debugFolder.add(debugParams, 'frontCoreMaskScale', 0.7, 1.3, 0.001).name('Front Core Mask');
-        debugFolder.add(debugParams, 'particleInnerCutoff', -0.3, 1.5, 0.001).name('Particle Inner Cutoff');
-        debugFolder.add(debugParams, 'particleInnerFadeStart', -0.3, 2.0, 0.001).name('Particle Fade Start');
-        debugFolder.add(debugParams, 'particleInnerFadeEnd', 0.0, 3.0, 0.001).name('Particle Fade End');
         debugFolder.add(debugParams, 'showRaymarchBackground').name('Show Raymarch Bg');
         debugFolder.add(debugParams, 'showBackLayer').name('Show Back Layer');
         debugFolder.add(debugParams, 'showLensingPass').name('Show Lensing Pass');
@@ -904,14 +1026,53 @@
             sharedUniforms.uTime.value = time;
             sharedUniforms.uSpinSpeed.value = params.spinSpeed;
             sharedUniforms.uCoreBrightness.value = params.diskBrightness;
+            particleGeo.setDrawRange(0, Math.floor(particleCount * THREE.MathUtils.clamp(particleParams.density, 0.0, 1.0)));
             pMatBack.uniforms.uParticleBrightness.value = params.particleBrightness;
             pMatFront.uniforms.uParticleBrightness.value = params.particleBrightness;
-            pMatBack.uniforms.uInnerCutoff.value = debugParams.particleInnerCutoff;
-            pMatFront.uniforms.uInnerCutoff.value = debugParams.particleInnerCutoff;
-            pMatBack.uniforms.uInnerFadeStart.value = debugParams.particleInnerFadeStart;
-            pMatFront.uniforms.uInnerFadeStart.value = debugParams.particleInnerFadeStart;
-            pMatBack.uniforms.uInnerFadeEnd.value = debugParams.particleInnerFadeEnd;
-            pMatFront.uniforms.uInnerFadeEnd.value = debugParams.particleInnerFadeEnd;
+            pMatBack.uniforms.uInnerCutoff.value = particleParams.innerCutoff;
+            pMatFront.uniforms.uInnerCutoff.value = particleParams.innerCutoff;
+            pMatBack.uniforms.uInnerFadeStart.value = particleParams.innerFadeStart;
+            pMatFront.uniforms.uInnerFadeStart.value = particleParams.innerFadeStart;
+            pMatBack.uniforms.uInnerFadeEnd.value = particleParams.innerFadeEnd;
+            pMatFront.uniforms.uInnerFadeEnd.value = particleParams.innerFadeEnd;
+            pMatBack.uniforms.uParticleAlpha.value = particleParams.alpha;
+            pMatFront.uniforms.uParticleAlpha.value = particleParams.alpha;
+            pMatBack.uniforms.uParticleSoftness.value = particleParams.softness;
+            pMatFront.uniforms.uParticleSoftness.value = particleParams.softness;
+            pMatBack.uniforms.uParticleEdgeStart.value = particleParams.edgeStart;
+            pMatFront.uniforms.uParticleEdgeStart.value = particleParams.edgeStart;
+            pMatBack.uniforms.uParticleEdgeEnd.value = particleParams.edgeEnd;
+            pMatFront.uniforms.uParticleEdgeEnd.value = particleParams.edgeEnd;
+            pMatBack.uniforms.uParticleEdgePow.value = particleParams.edgePow;
+            pMatFront.uniforms.uParticleEdgePow.value = particleParams.edgePow;
+            pMatBack.uniforms.uParticleBeaming.value = particleParams.beaming;
+            pMatFront.uniforms.uParticleBeaming.value = particleParams.beaming;
+            pMatBack.uniforms.uParticleTempPow.value = particleParams.tempPow;
+            pMatFront.uniforms.uParticleTempPow.value = particleParams.tempPow;
+            pMatBack.uniforms.uParticleCoreGamma.value = particleParams.coreGamma;
+            pMatFront.uniforms.uParticleCoreGamma.value = particleParams.coreGamma;
+            pMatBack.uniforms.uParticleOrbitMul.value = particleParams.orbitMul;
+            pMatFront.uniforms.uParticleOrbitMul.value = particleParams.orbitMul;
+            pMatBack.uniforms.uParticleVerticalScale.value = particleParams.verticalScale;
+            pMatFront.uniforms.uParticleVerticalScale.value = particleParams.verticalScale;
+            pMatBack.uniforms.uParticleJitterAmp.value = particleParams.jitterAmp;
+            pMatFront.uniforms.uParticleJitterAmp.value = particleParams.jitterAmp;
+            pMatBack.uniforms.uParticleJitterFreq.value = particleParams.jitterFreq;
+            pMatFront.uniforms.uParticleJitterFreq.value = particleParams.jitterFreq;
+            pMatBack.uniforms.uParticleSizeMul.value = particleParams.sizeMul;
+            pMatFront.uniforms.uParticleSizeMul.value = particleParams.sizeMul;
+            pMatBack.uniforms.uParticleConeStart.value = particleParams.coneStart;
+            pMatFront.uniforms.uParticleConeStart.value = particleParams.coneStart;
+            pMatBack.uniforms.uParticleConeEnd.value = particleParams.coneEnd;
+            pMatFront.uniforms.uParticleConeEnd.value = particleParams.coneEnd;
+            pMatBack.uniforms.uParticleConeMin.value = particleParams.coneMin;
+            pMatFront.uniforms.uParticleConeMin.value = particleParams.coneMin;
+            pMatBack.uniforms.uParticleColorLow.value.set(particleParams.colorLow);
+            pMatFront.uniforms.uParticleColorLow.value.set(particleParams.colorLow);
+            pMatBack.uniforms.uParticleColorMid.value.set(particleParams.colorMid);
+            pMatFront.uniforms.uParticleColorMid.value.set(particleParams.colorMid);
+            pMatBack.uniforms.uParticleColorHigh.value.set(particleParams.colorHigh);
+            pMatFront.uniforms.uParticleColorHigh.value.set(particleParams.colorHigh);
             lensingPass.uniforms.uCameraPos.value.copy(camera.position);
             lensingPass.uniforms.uCenterPreserve.value = debugParams.lensCenterPreserve;
             lensingPass.uniforms.uViewDamp.value = debugParams.lensViewDamp;
