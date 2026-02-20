@@ -353,13 +353,14 @@
                 // Match old behavior: render full disk in both passes.
                 // The back pass is lensed; the front pass overlays, producing the wrap illusion.
                 float passMask = 1.0;
+                float backMask = smoothstep(-0.12, 0.12, pixelDepth);
 
                 // Prevent front-pass emission from leaking into the black-hole core.
                 if (uIsFront > 0.5) {
                     vec2 screenUv = gl_FragCoord.xy / uViewport;
                     vec2 coreDelta = screenUv - uLensCenter;
                     coreDelta.x *= uAspectRatio;
-                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale) discard;
+                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale && backMask > 0.55) discard;
                 }
 
                 float r = length(vWorldPosition.xz);
@@ -534,11 +535,12 @@
                 // Match old behavior: render full particle set in both passes.
                 float passMask = 1.0;
                 if (vRadius < uRadiusLimit + uInnerCutoff) discard;
+                float backMask = smoothstep(-0.12, 0.12, vPixelDepth);
                 if (uIsFront > 0.5) {
                     vec2 screenUv = gl_FragCoord.xy / uViewport;
                     vec2 coreDelta = screenUv - uLensCenter;
                     coreDelta.x *= uAspectRatio;
-                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale) discard;
+                    if (length(coreDelta) < uLensRadius * uFrontCoreMaskScale && backMask > 0.55) discard;
                 }
 
                 vec2 coord = gl_PointCoord - vec2(0.5);
