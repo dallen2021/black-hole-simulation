@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realistic Black Hole Prototype</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #info {
+            position: absolute; top: 10px; left: 10px; color: rgba(255,255,255,0.8);
+            background: rgba(0,0,0,0.5); padding: 15px; border-radius: 8px;
+            pointer-events: none; border: 1px solid rgba(255,255,255,0.2);
+            z-index: 100;
+        }
+        h1 { margin: 0 0 5px 0; font-size: 18px; color: #ff9d00; }
+        p { margin: 0; font-size: 12px; }
+        
+        /* Debug Legend Styling */
+        #debug-legend {
+            position: absolute; bottom: 10px; left: 10px; color: rgba(255,255,255,0.9);
+            background: rgba(0,0,0,0.85); padding: 15px; border-radius: 8px;
+            pointer-events: none; border: 1px solid rgba(255,255,255,0.3);
+            z-index: 100; font-family: monospace; display: none;
+        }
+        #debug-legend h3 { margin: 0 0 10px 0; font-size: 14px; color: #00b3ff; text-transform: uppercase; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 6px; font-size: 12px; }
+        .color-box { width: 16px; height: 16px; margin-right: 10px; border: 1px solid #555; border-radius: 3px; }
+
+        /* Custom GUI styling to fit the vibe */
+        .lil-gui { --background-color: rgba(15, 15, 18, 0.9); --text-color: #eee; --title-background-color: #222; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h1>Hybrid Spacetime Sandbox</h1>
+        <p>Real Relativistic Physics Applied:</p>
+        <p>- Stable Raymarched Plasma Core</p>
+        <p>- Einstein Vertex-Lensed Particles</p>
+        <p>- Keplerian Doppler Beaming</p>
+        <p>- Full Parameter Sandbox</p>
+    </div>
+
+    <!-- The Debug Legend Overlay -->
+    <div id="debug-legend">
+        <h3>Raymarch Termination</h3>
+        <div class="legend-item"><div class="color-box" style="background: #000;"></div> Horizon Hit (Absorbed)</div>
+        <div class="legend-item"><div class="color-box" style="background: #00b3ff;"></div> Escaped (Safe)</div>
+        <div class="legend-item"><div class="color-box" style="background: #ff0000;"></div> Max Steps (Unfinished)</div>
+        <div class="legend-item"><div class="color-box" style="background: #ff00ff;"></div> Unknown Error</div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.156.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- 1. CORE SETUP ---
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 8, 35);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2; 
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 10;
+        controls.maxDistance = 90;
+
+        // --- 2. HYBRID SCENE ARCHITECTURE ---
+        const sceneRaymarch = new THREE.Scene(); 
+        const sceneParticles = new THREE.Scene();
+        const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+        // --- 3. LAYER 1: RAYMARCHED PLASMA CORE ---
+        const raymarchVertexShader = `
+            varying vec2 vUv;
+            void main() { vUv = uv; gl_Position = vec4(position, 1.0); }
+        `;
+
+        const raymarchFragmentShader = `
+            uniform vec3 uCameraPos;
+            uniform mat4 uCameraMatrix;
+            uniform vec2 uResolution;
+            uniform float uTime;
+            uniform float uSpinSpeed;
+            uniform float uRadiusLimit;
+            uniform float uDiskBrightness;
+            
+            // --- NEW UI UNIFORMS ---
+            uniform float uLensingMod;
+            uniform float uDiskOuter;
+            uniform float uColorTemp;
+            uniform float uDiskInner;
+            uniform float uDiskInnerThickness;
+            uniform float uDiskOuterThickness;
+            uniform float uDiskOffset;
+            uniform float uDiskSharpness;
+            uniform float uDiskFlarePower;
+            uniform float uDiskNoiseScale;
+            uniform float uDiskNoiseScroll;
+            uniform float uDiskBeaming;
+            uniform float uDiskAlpha;
+            
+            // --- ADVANCED DEBUG UNIFORMS ---
+            uniform int uMaxSteps;
+            uniform float uStepScale;
+            uniform float uHorizonHit;
+            uniform float uEscapeRadius;
+            uniform float uGravityK;
+            uniform float uDebugTerminationMode;
+
+            varying vec2 vUv;
+
+            float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+            float noise(vec2 st) {
+                vec2 i = floor(st); vec2 f = fract(st);
+                float a = random(i); float b = random(i + vec2(1.0, 0.0));
+                float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+            }
+            float fbm(vec2 st) {
+                float value = 0.0; float amp = 0.5;
+                for (int i = 0; i < 4; i++) {
+                    value += amp * noise(st); st *= 2.0; amp *= 0.5;
+                }
+                return value;
+            }
+
+            void main() {
+                vec2 uv = (vUv - 0.5) * 2.0;
+                uv.x *= uResolution.x / uResolution.y;
+
+                float fov = tan(45.0 * 0.5 * 3.14159 / 180.0);
+                vec3 rayDir = normalize(vec3(uv.x * fov, uv.y * fov, -1.0));
+                rayDir = (uCameraMatrix * vec4(rayDir, 0.0)).xyz;
+                
+                vec3 rayPos = uCameraPos;
+                
+                float rs = uRadiusLimit;
+                vec3 h = cross(rayPos, rayDir);
+                float h2 = dot(h, h);
+                
+                vec4 color = vec4(0.0);
+                float dt = 0.05;
+                bool hitHorizon = false;
+                int termReason = 0; // 1 = horizon hit, 2 = escaped, 3 = max-step/unfinished
+                
+                const int MAX_RAYMARCH_STEPS = 600;
+                for(int i = 0; i < MAX_RAYMARCH_STEPS; i++) {
+                    if(i >= uMaxSteps) { termReason = 3; break; } // Controlled via UI
+                    
+                    float r2 = dot(rayPos, rayPos);
+                    float r = sqrt(r2);
+                    
+                    if(r < rs * uHorizonHit) { hitHorizon = true; termReason = 1; break; }
+                    if(r > uEscapeRadius) { termReason = 2; break; } // Safe exit boundary
+                    
+                    // Multiply lensing strength by our UI modifiers
+                    vec3 accel = -uGravityK * h2 * rs * rayPos / (r2 * r2 * r) * uLensingMod;
+                    rayDir = normalize(rayDir + accel * dt);
+                    
+                    float r_xz = length(rayPos.xz);
+                    float isco = rs * uDiskInner; 
+                    float visualInner = isco + uDiskOffset; 
+                    
+                    if(r_xz > visualInner && r_xz < uDiskOuter) {
+                        float normalizedDist = clamp((r_xz - visualInner) / max(1.0, uDiskOuter - visualInner), 0.0, 1.0);
+                        float scaleHeight = mix(uDiskInnerThickness, uDiskOuterThickness, pow(normalizedDist, uDiskFlarePower));
+                        float yDist = abs(rayPos.y);
+                        
+                        float verticalFade = exp(-pow(yDist / max(scaleHeight, 0.001), uDiskSharpness));
+                        
+                        if(verticalFade > 0.01) {
+                            float omega = (2.0 * uSpinSpeed) * pow(isco / r_xz, 0.65);
+                            float angle = atan(rayPos.z, rayPos.x) + uTime * omega;
+                            
+                            // Dynamic UI Noise Control
+                            vec2 p2 = vec2(cos(angle)*r_xz, sin(angle)*r_xz) * uDiskNoiseScale;
+                            vec2 w = vec2(fbm(p2 + vec2(2.1, 5.7)), fbm(p2 + vec2(8.3, 1.3)));
+                            float gas = fbm(p2 * 1.5 + w * 2.0 - uTime * uDiskNoiseScroll);
+                            
+                            float isInner = 1.0 - smoothstep(visualInner, visualInner + 1.5, r_xz);
+                            float density = mix(smoothstep(0.2, 0.8, gas), 1.0, isInner) * verticalFade;
+                            
+                            density *= 1.0 - smoothstep(uDiskOuter * 0.65, uDiskOuter, r_xz); 
+                            
+                            float temp = pow(isco / r_xz, 1.4) * uColorTemp;
+                            vec3 c = mix(vec3(0.6, 0.05, 0.0), vec3(1.0, 0.4, 0.0), smoothstep(0.0, 0.3, temp));
+                            c = mix(c, vec3(1.0, 0.85, 0.3), smoothstep(0.3, 0.7, temp));
+                            c = mix(c, vec3(1.0, 1.0, 1.0), smoothstep(0.7, 1.0, temp));
+                            
+                            vec3 velDir = normalize(vec3(-rayPos.z, 0.0, rayPos.x));
+                            float doppler = dot(-rayDir, velDir); 
+                            float beaming = 1.0 + doppler * uDiskBeaming; 
+                            
+                            vec3 em = c * beaming * uDiskBrightness * density;
+                            float alpha = density * dt * uDiskAlpha;
+                            
+                            color.rgb += (1.0 - color.a) * em * dt;
+                            color.a += (1.0 - color.a) * alpha;
+                            
+                            if(color.a > 0.99) break;
+                        }
+                    }
+                    
+                    dt = uStepScale * r;
+                    float distToEquator = abs(rayPos.y);
+                    if(distToEquator < 1.0 && r_xz < 30.0) {
+                        dt = min(dt, max(0.015, distToEquator * 0.3));
+                    }
+                    if (rayPos.y * (rayPos.y + rayDir.y * dt) < 0.0) {
+                        dt = min(dt, abs(rayPos.y / rayDir.y) + 0.001); 
+                    }
+                    rayPos += rayDir * dt;
+                }
+                
+                if(termReason == 0) termReason = 3;
+                
+                // Debug Termination Coloring Override
+                if(uDebugTerminationMode > 0.5) {
+                    vec3 dbg = vec3(1.0, 0.0, 1.0); // magenta (unknown fallback)
+                    if(termReason == 1) dbg = vec3(0.0, 0.0, 0.0);      // black: horizon
+                    if(termReason == 2) dbg = vec3(0.0, 0.7, 1.0);      // cyan: escaped
+                    if(termReason == 3) dbg = vec3(1.0, 0.0, 0.0);      // red: max-step limit
+                    gl_FragColor = vec4(dbg, 1.0);
+                    return;
+                }
+
+                if(!hitHorizon && color.a < 0.99) {
+                    vec3 absDir = abs(rayDir);
+                    float maxAxis = max(max(absDir.x, absDir.y), absDir.z);
+                    vec3 boxPos = rayDir / maxAxis * 100.0;
+                    
+                    vec2 uvBox;
+                    if(maxAxis == absDir.y) uvBox = boxPos.xz;
+                    else if(maxAxis == absDir.x) uvBox = boxPos.yz;
+                    else uvBox = boxPos.xy;
+                    
+                    vec2 grid = fract(uvBox * 0.15);
+                    float line = step(0.96, grid.x) + step(0.96, grid.y);
+                    vec3 roomCol = mix(vec3(0.015, 0.015, 0.02), vec3(0.0), clamp(line, 0.0, 1.0));
+                    
+                    float dist = length(boxPos);
+                    roomCol += vec3(1.0, 0.5, 0.1) * (150.0 * rs / (dist * dist)); 
+                    
+                    color.rgb += (1.0 - color.a) * roomCol;
+                }
+                
+                gl_FragColor = vec4(color.rgb, 1.0);
+            }
+        `;
+
+        const raymarchMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uCameraPos: { value: new THREE.Vector3() },
+                uCameraMatrix: { value: new THREE.Matrix4() },
+                uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                uTime: { value: 0 },
+                uSpinSpeed: { value: 1.0 },
+                uRadiusLimit: { value: 3.0 },
+                uDiskBrightness: { value: 5.0 },
+                uLensingMod: { value: 1.0 },
+                uDiskOuter: { value: 25.0 },
+                uColorTemp: { value: 1.0 },
+                uDiskInner: { value: 1.35 },
+                uDiskInnerThickness: { value: 0.05 },
+                uDiskOuterThickness: { value: 0.6 },
+                uDiskOffset: { value: 0.0 },
+                uDiskSharpness: { value: 2.0 },
+                uDiskFlarePower: { value: 2.0 },
+                uDiskNoiseScale: { value: 0.4 },
+                uDiskNoiseScroll: { value: 0.15 },
+                uDiskBeaming: { value: 0.8 },
+                uDiskAlpha: { value: 3.5 },
+                uMaxSteps: { value: 600 },
+                uStepScale: { value: 0.04 },
+                uHorizonHit: { value: 0.98 },
+                uEscapeRadius: { value: 150.0 },
+                uGravityK: { value: 1.5 },
+                uDebugTerminationMode: { value: 0.0 }
+            },
+            vertexShader: raymarchVertexShader,
+            fragmentShader: raymarchFragmentShader,
+            depthWrite: false
+        });
+
+        const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), raymarchMat);
+        sceneRaymarch.add(quad);
+
+
+        // --- 4. LAYER 2: EINSTEIN-LENSED PARTICLES ---
+        const particleCount = 60000; 
+        const particlePositions = new Float32Array(particleCount * 3);
+        const particleAngles = new Float32Array(particleCount);
+        const particleRadii = new Float32Array(particleCount);
+        const particleSizes = new Float32Array(particleCount);
+
+        for (let i = 0; i < particleCount; i++) {
+            const r = 4.0 + Math.pow(Math.random(), 1.5) * 24.0;
+            const theta = Math.random() * Math.PI * 2;
+            
+            particleRadii[i] = r;
+            particleAngles[i] = theta;
+            particleSizes[i] = (Math.random() * 1.5 + 0.5) * (r / 10.0); 
+
+            particlePositions[i * 3] = r * Math.cos(theta);
+            particlePositions[i * 3 + 1] = (Math.random() - 0.5); 
+            particlePositions[i * 3 + 2] = r * Math.sin(theta);
+        }
+
+        const particleGeo = new THREE.BufferGeometry();
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        particleGeo.setAttribute('aAngle', new THREE.BufferAttribute(particleAngles, 1));
+        particleGeo.setAttribute('aRadius', new THREE.BufferAttribute(particleRadii, 1));
+        particleGeo.setAttribute('aSize', new THREE.BufferAttribute(particleSizes, 1));
+
+        const particleVertexShader = `
+            uniform float uTime;
+            uniform float uSpinSpeed;
+            uniform vec3 uCameraPos;
+            uniform float uRadiusLimit;
+            
+            // --- NEW UI UNIFORMS ---
+            uniform float uLensingMod;
+            uniform float uParticleSpread;
+            uniform float uParticleSizeMod;
+            uniform float uParticleInner;
+            uniform float uParticleTurbulence;
+            uniform float uParticleOffset;
+            uniform float uParticleFlarePower;
+            uniform float uParticleOuter;
+            uniform float uParticleInnerThickness;
+            uniform float uParticleOuterThickness;
+            uniform float uOrbitMul;
+            uniform float uJitterFreq;
+            
+            // --- SYNCED GRAVITY UNIFORMS ---
+            uniform float uGravityK;
+            uniform float uParticleLensScale;
+            
+            attribute float aAngle;
+            attribute float aRadius;
+            attribute float aSize;
+            
+            varying float vDoppler;
+            varying float vRadius;
+
+            void main() {
+                vRadius = aRadius;
+                float isco = uRadiusLimit * uParticleInner;
+                float visualInner = isco + uParticleOffset;
+                float effR = max(aRadius, isco);
+                float speed = (18.0 / sqrt(effR)) * uOrbitMul;
+                float currentAngle = aAngle + (uTime * speed * uSpinSpeed);
+                
+                vec3 newPos = position;
+                newPos.x = aRadius * cos(currentAngle);
+                newPos.z = aRadius * sin(currentAngle);
+                
+                // NEW SHAPE MATH: Allows making it thick in the middle and thin at the edges
+                float normalizedDist = clamp((aRadius - visualInner) / max(1.0, uParticleOuter - visualInner), 0.0, 1.0);
+                float spread = mix(uParticleInnerThickness, uParticleOuterThickness, pow(normalizedDist, uParticleFlarePower));
+                
+                newPos.y = position.y * spread * uParticleSpread;
+                newPos.y += sin(uTime * uJitterFreq + aAngle * 10.0) * uParticleTurbulence; 
+
+                vec4 worldPos = modelMatrix * vec4(newPos, 1.0);
+                
+                vec3 velocityDir = normalize(vec3(-sin(currentAngle), 0.0, cos(currentAngle)));
+                vec3 viewDir = normalize(uCameraPos - worldPos.xyz);
+                vDoppler = dot(velocityDir, viewDir);
+
+                vec3 bhToPixel = worldPos.xyz;
+                vec3 camDir = normalize(vec3(0.0) - uCameraPos);
+                float pixelDepth = dot(bhToPixel, camDir); 
+
+                vec4 mvPosition = viewMatrix * worldPos;
+                vec4 projPos = projectionMatrix * mvPosition;
+
+                // EINSTEIN LENSING - Now synced with Gravity K and smoothed via Z-Depth
+                if (uLensingMod > 0.01) {
+                    vec4 bhProj = projectionMatrix * viewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+                    vec2 bhScreen = bhProj.xy / bhProj.w;
+                    
+                    vec2 screenPos = projPos.xy / projPos.w;
+                    vec2 delta = screenPos - bhScreen;
+                    
+                    float aspect = projectionMatrix[1][1] / projectionMatrix[0][0]; 
+                    delta.x *= aspect;
+                    
+                    float dist = length(delta);
+                    float camDist = length(uCameraPos);
+                    
+                    // Multiply the base scale by the Gravity K ratio to keep them synced
+                    float gravityRatio = uGravityK / 1.5;
+                    float r_E = (uRadiusLimit * uLensingMod * uParticleLensScale * gravityRatio / camDist) * projectionMatrix[1][1];
+                    
+                    float lensedDist = 0.5 * (dist + sqrt(dist * dist + 4.0 * r_E * r_E));
+                    
+                    // Smoothly blend the lensing effect as the particle travels behind the black hole
+                    // This perfectly matches the smooth volumetric integration of the raymarcher!
+                    float depthBlend = smoothstep(-uRadiusLimit * 0.5, uRadiusLimit * 2.0, pixelDepth);
+                    float apparentDist = mix(dist, lensedDist, depthBlend);
+                    
+                    vec2 dir = delta / max(dist, 0.0001);
+                    vec2 deflectedScreenPos = bhScreen + dir * apparentDist * vec2(1.0 / aspect, 1.0);
+                    
+                    projPos.xy = deflectedScreenPos * projPos.w;
+                }
+
+                gl_PointSize = (aSize * 100.0 * uParticleSizeMod) / -mvPosition.z;
+                gl_Position = projPos;
+            }
+        `;
+
+        const particleFragmentShader = `
+            uniform float uRadiusLimit;
+            uniform float uParticleBrightness;
+            uniform float uParticleOuter;
+            uniform float uParticleColorTemp;
+            uniform float uParticleInner;
+            uniform float uParticleOffset;
+            uniform float uParticleSharpness;
+            uniform vec3 uColorLow;
+            uniform vec3 uColorMid;
+            uniform vec3 uColorHigh;
+            
+            varying float vDoppler;
+            varying float vRadius;
+
+            void main() {
+                vec2 coord = gl_PointCoord - vec2(0.5);
+                float dist = length(coord);
+                if (dist > 0.5) discard;
+                
+                // Dynamic particle sharpness
+                float alpha = exp(-pow(dist * 2.0, uParticleSharpness) * 3.0) * 0.15; 
+                
+                float isco = uRadiusLimit * uParticleInner;
+                float visualInner = isco + uParticleOffset;
+                
+                // Hide particles that are pushed inside the visual offset
+                if (vRadius < visualInner) discard;
+                
+                float effR = max(vRadius, isco);
+                
+                // Modulate Color Temp with UI Custom Colors
+                float temp = pow(isco / effR, 1.8) * uParticleColorTemp; 
+                vec3 color = mix(uColorLow, uColorMid, smoothstep(0.0, 0.4, temp));
+                color = mix(color, uColorHigh, smoothstep(0.4, 1.0, temp));
+
+                float beaming = 1.0 + vDoppler * 0.8;
+                float edgeFade = 1.0 - smoothstep(uParticleOuter * 0.65, uParticleOuter, vRadius);
+
+                gl_FragColor = vec4(color * beaming * uParticleBrightness, alpha * edgeFade);
+            }
+        `;
+
+        const particleMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uSpinSpeed: { value: 1.0 },
+                uCameraPos: { value: camera.position },
+                uRadiusLimit: { value: 3.0 },
+                uParticleBrightness: { value: 2.5 },
+                uLensingMod: { value: 1.0 },
+                uParticleSpread: { value: 1.0 },
+                uParticleSizeMod: { value: 1.0 },
+                uParticleOuter: { value: 30.0 },
+                uParticleColorTemp: { value: 1.0 },
+                uParticleInner: { value: 2.0 },
+                uParticleTurbulence: { value: 0.25 },
+                uParticleOffset: { value: 0.0 },
+                uParticleFlarePower: { value: 1.0 },
+                uParticleSharpness: { value: 2.0 },
+                uParticleInnerThickness: { value: 5.0 },
+                uParticleOuterThickness: { value: 0.0 },
+                uOrbitMul: { value: 1.0 },
+                uJitterFreq: { value: 1.5 },
+                uColorLow: { value: new THREE.Color('#991a00') },
+                uColorMid: { value: new THREE.Color('#ff801a') },
+                uColorHigh: { value: new THREE.Color('#ffe6cc') },
+                uGravityK: { value: 1.5 },
+                uParticleLensScale: { value: 5.0 }
+            },
+            vertexShader: particleVertexShader, fragmentShader: particleFragmentShader,
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+        });
+        
+        const particles = new THREE.Points(particleGeo, particleMat);
+        sceneParticles.add(particles);
+
+
+        // --- 5. PIPELINE ---
+        const composer = new EffectComposer(renderer);
+        
+        const bgPass = new RenderPass(sceneRaymarch, orthoCamera);
+        bgPass.clearColor = new THREE.Color(0x000000);
+        bgPass.clearAlpha = 1.0;
+        composer.addPass(bgPass);
+
+        const pPass = new RenderPass(sceneParticles, camera);
+        pPass.clear = false;
+        composer.addPass(pPass);
+
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.8, 0.5, 0.85);
+        bloomPass.threshold = 0.2;
+        composer.addPass(bloomPass);
+
+        // --- 6. CONTROLS, GUI & RENDER LOOP ---
+        const gui = new GUI({ title: 'Simulation Settings', width: 340 });
+        
+        const params = {
+            // General
+            spinSpeed: 0.5,
+            autoOrbit: false,
+            // Black Hole
+            radius: 3.0,
+            lensingMod: 1.0,
+            expand: () => triggerExpansion(),
+            // Accretion Core
+            diskBrightness: 5.0,
+            diskInner: 1.35,
+            diskOffset: 0.0,
+            diskOuter: 25.0,
+            diskInnerThickness: 0.05,
+            diskOuterThickness: 0.6,
+            diskFlarePower: 2.0,
+            diskSharpness: 2.0,
+            colorTemp: 1.0,
+            diskNoiseScale: 0.4,
+            diskNoiseScroll: 0.15,
+            diskBeaming: 0.8,
+            diskAlpha: 3.5,
+            // Particles
+            particleDensity: 1.0,
+            particleBrightness: 2.5,
+            particleInner: 2.0,
+            particleOffset: 0.0,
+            particleOuter: 30.0,
+            particleSpread: 1.0,
+            particleInnerThickness: 5.0,
+            particleOuterThickness: 0.0,
+            particleFlarePower: 1.0,
+            particleSizeMod: 1.0,
+            particleSharpness: 2.0,
+            particleColorTemp: 1.0,
+            particleTurbulence: 0.25,
+            orbitMul: 1.0,
+            jitterFreq: 1.5,
+            particleLensScale: 5.0, // New setting for shadow matching
+            colorLow: '#991a00',
+            colorMid: '#ff801a',
+            colorHigh: '#ffe6cc',
+            // Post-Processing
+            exposure: 1.2,
+            bloomStrength: 1.8,
+            bloomThreshold: 0.2,
+            bloomRadius: 0.85,
+            // Advanced Debug
+            maxSteps: 600,
+            stepScale: 0.04,
+            horizonHit: 0.98,
+            escapeRadius: 150.0,
+            gravityK: 1.5,
+            debugTermination: false
+        };
+
+        const f1 = gui.addFolder('Physics & Camera');
+        f1.add(params, 'spinSpeed', 0.0, 3.0).name('Time Scale');
+        f1.add(params, 'autoOrbit').name('Auto Orbit Camera');
+
+        const f2 = gui.addFolder('Black Hole Singularity');
+        f2.add(params, 'radius', 1.0, 10.0).name('Mass (Radius)').listen();
+        f2.add(params, 'lensingMod', 0.0, 3.0).name('Gravity Lens Strength');
+        f2.add(params, 'expand').name('Simulate Growth');
+
+        const f3 = gui.addFolder('Accretion Core (Plasma)');
+        f3.add(params, 'diskBrightness', 0.0, 20.0).name('Core Brightness');
+        f3.add(params, 'diskInner', 1.0, 3.0).name('Gravity ISCO');
+        f3.add(params, 'diskOffset', 0.0, 15.0).name('Push Away (Offset)');
+        f3.add(params, 'diskOuter', 10.0, 50.0).name('Disk Outer Edge');
+        f3.add(params, 'diskInnerThickness', 0.0, 3.0).name('Inner Thickness');
+        f3.add(params, 'diskOuterThickness', 0.0, 3.0).name('Outer Thickness');
+        f3.add(params, 'diskFlarePower', 0.5, 3.0).name('Conical Flare Power');
+        f3.add(params, 'diskSharpness', 0.5, 10.0).name('Vertical Sharpness');
+        f3.add(params, 'colorTemp', 0.1, 3.0).name('Color Shift (Temp)');
+        f3.add(params, 'diskNoiseScale', 0.1, 2.0).name('Noise Scale');
+        f3.add(params, 'diskNoiseScroll', 0.0, 2.0).name('Noise Scroll');
+        f3.add(params, 'diskBeaming', 0.0, 2.0).name('Doppler Beaming');
+        f3.add(params, 'diskAlpha', 0.0, 10.0).name('Base Alpha');
+
+        const f4 = gui.addFolder('Particle Swarm (Gas)');
+        f4.add(params, 'particleDensity', 0.0, 1.0).name('Density (Count)');
+        f4.add(params, 'particleBrightness', 0.0, 10.0).name('Gas Brightness');
+        f4.add(params, 'orbitMul', 0.0, 3.0).name('Orbit Speed Mul');
+        f4.add(params, 'particleInner', 1.0, 3.0).name('Gravity ISCO');
+        f4.add(params, 'particleOffset', 0.0, 15.0).name('Push Away (Offset)');
+        f4.add(params, 'particleOuter', 10.0, 50.0).name('Gas Outer Edge');
+        f4.add(params, 'particleInnerThickness', 0.0, 10.0).name('Inner Thickness');
+        f4.add(params, 'particleOuterThickness', 0.0, 10.0).name('Outer Thickness');
+        f4.add(params, 'particleSpread', 0.0, 5.0).name('Global Vertical Scale');
+        f4.add(params, 'particleFlarePower', 0.5, 3.0).name('Conical Flare Power');
+        f4.add(params, 'particleSizeMod', 0.1, 5.0).name('Sprite Size');
+        f4.add(params, 'particleSharpness', 0.5, 10.0).name('Sprite Softness');
+        f4.add(params, 'particleTurbulence', 0.0, 2.0).name('Turbulence Amplitude');
+        f4.add(params, 'jitterFreq', 0.0, 8.0).name('Turbulence Freq');
+        f4.add(params, 'particleColorTemp', 0.1, 3.0).name('Color Shift (Temp)');
+        f4.add(params, 'particleLensScale', 0.0, 10.0).name('Lens Shadow Size');
+        f4.addColor(params, 'colorLow').name('Color Low');
+        f4.addColor(params, 'colorMid').name('Color Mid');
+        f4.addColor(params, 'colorHigh').name('Color High');
+
+        const f5 = gui.addFolder('Post-Processing Engine');
+        f5.add(params, 'exposure', 0.1, 3.0).name('Camera Exposure').onChange(v => renderer.toneMappingExposure = v);
+        f5.add(params, 'bloomStrength', 0.0, 5.0).name('Bloom Strength').onChange(v => bloomPass.strength = v);
+        f5.add(params, 'bloomThreshold', 0.0, 1.0).name('Bloom Threshold').onChange(v => bloomPass.threshold = v);
+        f5.add(params, 'bloomRadius', 0.0, 2.0).name('Bloom Radius').onChange(v => bloomPass.radius = v);
+
+        const viewReadout = { yawDeg: 0.0, pitchDeg: 0.0, lookX: 0.0, lookY: 0.0, lookZ: -1.0 };
+        const viewFolder = gui.addFolder('View Direction');
+        viewFolder.add(viewReadout, 'yawDeg').name('Yaw (deg)').listen();
+        viewFolder.add(viewReadout, 'pitchDeg').name('Pitch (deg)').listen();
+        viewFolder.add(viewReadout, 'lookX').name('Look X').listen();
+        viewFolder.add(viewReadout, 'lookY').name('Look Y').listen();
+        viewFolder.add(viewReadout, 'lookZ').name('Look Z').listen();
+        
+        const debugFolder = gui.addFolder('Debug / Advanced');
+        debugFolder.add(params, 'maxSteps', 50, 600, 1).name('Raymarch Max Steps');
+        debugFolder.add(params, 'stepScale', 0.01, 0.2).name('Raymarch Step Scale');
+        debugFolder.add(params, 'horizonHit', 0.5, 1.2).name('Horizon Hit Boundary');
+        debugFolder.add(params, 'escapeRadius', 50.0, 300.0).name('Ray Escape Radius');
+        debugFolder.add(params, 'gravityK', 0.0, 3.0).name('Gravity Constant K');
+        debugFolder.add(params, 'debugTermination').name('Termination Colors').onChange((enabled) => {
+            document.getElementById('debug-legend').style.display = enabled ? 'block' : 'none';
+        });
+
+        f2.open(); f3.open(); f4.open();
+
+        let isExpanding = false;
+        let expansionTime = 0;
+        let currentScale = 1.0;
+
+        function triggerExpansion() {
+            if(isExpanding) return;
+            isExpanding = true;
+            expansionTime = 0;
+            currentScale = 0.1;
+        }
+
+        const clock = new THREE.Clock();
+        const cameraMat = new THREE.Matrix4();
+        const lookDir = new THREE.Vector3();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            if (params.autoOrbit) {
+                camera.position.x = Math.cos(time * 0.1) * 35;
+                camera.position.z = Math.sin(time * 0.1) * 35;
+                camera.lookAt(0, 0, 0);
+            }
+            controls.update();
+
+            // Telemetry Readouts
+            camera.getWorldDirection(lookDir);
+            const yaw = Math.atan2(lookDir.x, lookDir.z);
+            const pitch = Math.asin(THREE.MathUtils.clamp(lookDir.y, -1.0, 1.0));
+            viewReadout.yawDeg = Number((THREE.MathUtils.radToDeg(yaw)).toFixed(2));
+            viewReadout.pitchDeg = Number((THREE.MathUtils.radToDeg(pitch)).toFixed(2));
+            viewReadout.lookX = Number((lookDir.x).toFixed(3));
+            viewReadout.lookY = Number((lookDir.y).toFixed(3));
+            viewReadout.lookZ = Number((lookDir.z).toFixed(3));
+
+            cameraMat.extractRotation(camera.matrixWorld);
+            
+            // Sync UI parameters to Raymarcher Shader
+            raymarchMat.uniforms.uCameraPos.value.copy(camera.position);
+            raymarchMat.uniforms.uCameraMatrix.value.copy(cameraMat);
+            raymarchMat.uniforms.uTime.value = time;
+            raymarchMat.uniforms.uSpinSpeed.value = params.spinSpeed;
+            raymarchMat.uniforms.uDiskBrightness.value = params.diskBrightness;
+            raymarchMat.uniforms.uLensingMod.value = params.lensingMod;
+            raymarchMat.uniforms.uDiskOuter.value = params.diskOuter;
+            raymarchMat.uniforms.uColorTemp.value = params.colorTemp;
+            raymarchMat.uniforms.uDiskInner.value = params.diskInner;
+            raymarchMat.uniforms.uDiskInnerThickness.value = params.diskInnerThickness;
+            raymarchMat.uniforms.uDiskOuterThickness.value = params.diskOuterThickness;
+            raymarchMat.uniforms.uDiskOffset.value = params.diskOffset;
+            raymarchMat.uniforms.uDiskSharpness.value = params.diskSharpness;
+            raymarchMat.uniforms.uDiskFlarePower.value = params.diskFlarePower;
+            raymarchMat.uniforms.uDiskNoiseScale.value = params.diskNoiseScale;
+            raymarchMat.uniforms.uDiskNoiseScroll.value = params.diskNoiseScroll;
+            raymarchMat.uniforms.uDiskBeaming.value = params.diskBeaming;
+            raymarchMat.uniforms.uDiskAlpha.value = params.diskAlpha;
+            
+            // Sync Advanced Debug Uniforms
+            raymarchMat.uniforms.uMaxSteps.value = Math.floor(params.maxSteps);
+            raymarchMat.uniforms.uStepScale.value = params.stepScale;
+            raymarchMat.uniforms.uHorizonHit.value = params.horizonHit;
+            raymarchMat.uniforms.uEscapeRadius.value = params.escapeRadius;
+            raymarchMat.uniforms.uGravityK.value = params.gravityK;
+            raymarchMat.uniforms.uDebugTerminationMode.value = params.debugTermination ? 1.0 : 0.0;
+
+            // Sync UI parameters to 3D Particle Shader
+            particleMat.uniforms.uCameraPos.value.copy(camera.position);
+            particleMat.uniforms.uTime.value = time;
+            particleMat.uniforms.uSpinSpeed.value = params.spinSpeed;
+            particleMat.uniforms.uParticleBrightness.value = params.particleBrightness;
+            particleMat.uniforms.uLensingMod.value = params.lensingMod;
+            particleMat.uniforms.uParticleSpread.value = params.particleSpread;
+            particleMat.uniforms.uParticleSizeMod.value = params.particleSizeMod;
+            particleMat.uniforms.uParticleOuter.value = params.particleOuter;
+            particleMat.uniforms.uParticleColorTemp.value = params.particleColorTemp;
+            particleMat.uniforms.uParticleInner.value = params.particleInner;
+            particleMat.uniforms.uParticleTurbulence.value = params.particleTurbulence;
+            particleMat.uniforms.uParticleOffset.value = params.particleOffset;
+            particleMat.uniforms.uParticleFlarePower.value = params.particleFlarePower;
+            particleMat.uniforms.uParticleSharpness.value = params.particleSharpness;
+            particleMat.uniforms.uParticleInnerThickness.value = params.particleInnerThickness;
+            particleMat.uniforms.uParticleOuterThickness.value = params.particleOuterThickness;
+            particleMat.uniforms.uOrbitMul.value = params.orbitMul;
+            particleMat.uniforms.uJitterFreq.value = params.jitterFreq;
+            if(particleMat.uniforms.uColorLow) particleMat.uniforms.uColorLow.value.set(params.colorLow);
+            if(particleMat.uniforms.uColorMid) particleMat.uniforms.uColorMid.value.set(params.colorMid);
+            if(particleMat.uniforms.uColorHigh) particleMat.uniforms.uColorHigh.value.set(params.colorHigh);
+            if(particleMat.uniforms.uGravityK) particleMat.uniforms.uGravityK.value = params.gravityK;
+            if(particleMat.uniforms.uParticleLensScale) particleMat.uniforms.uParticleLensScale.value = params.particleLensScale;
+
+            // Apply Particle Density (Culling)
+            particleGeo.setDrawRange(0, Math.floor(particleCount * params.particleDensity));
+
+            if (isExpanding) {
+                expansionTime += delta;
+                const progress = Math.min(expansionTime / 3.0, 1.0);
+                const easeOut = 1 - Math.pow(1 - progress, 3);
+                currentScale = 0.1 + (easeOut * 0.9); 
+                params.radius = 3.0 * currentScale; 
+                if (progress >= 1.0) isExpanding = false;
+            }
+
+            raymarchMat.uniforms.uRadiusLimit.value = params.radius;
+            particleMat.uniforms.uRadiusLimit.value = params.radius;
+
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            raymarchMat.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
